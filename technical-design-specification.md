@@ -63,11 +63,9 @@ To install if missing: `xcode-select --install`
 
 The initial target environment uses the following setup:
 
-- **Enclosure:** ORICO Daisy Chain 4-Bay (USB 3.x, DAS)
 - **Connection:** USB — no Thunderbolt
 - **Array type:** Apple Software RAID 1 (Mirror)
 - **Filesystem:** Mac OS Extended (Journaled) / HFS+
-- **Drive model:** Seagate IronWolf (NAS-grade HDDs)
 - **Array name:** G-Raid (may vary; tool must handle any array name)
 - **Number of arrays:** 1 (v1.0); multi-array support considered for v2.0
 

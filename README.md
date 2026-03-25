@@ -26,9 +26,7 @@ xcode-select --install
 
 1. **Clone or download** the project and open a terminal in the project folder.
 
-2. **(Optional) Add a custom notification icon** — place an `AppIcon.icns` file in the project folder before running the installer. The icon appears in all notifications and in System Settings → Notifications → RAID Monitor. If omitted, a generic macOS icon is used.
-
-   To create an `.icns` from your artwork: open a 1024×1024 PNG in **Preview → File → Export… → Format: icns**.
+2. **(Optional) Add a custom notification icon** — place a `AppIcon.png` (1024×1024 px, square) in the project folder before running the installer. The icon appears in all notifications and in System Settings → Notifications → RAID Monitor. If omitted, a generic macOS icon is used. The installer converts the PNG to the required `.icns` format automatically.
 
 The default icon is from by Icontoaster.com (Michael Ludwig).
 
@@ -157,7 +155,7 @@ Set `EMAIL_ENABLED=true` and provide `EMAIL_TO`. You also need a working mail se
 
 ### Updating the notification icon
 
-To add or replace the icon after installation, drop a new `AppIcon.icns` into the project directory and re-run `./install.sh`.
+To add or replace the icon after installation, drop a new `AppIcon.png` into the project directory and re-run `./install.sh`.
 
 ---
 
@@ -305,7 +303,7 @@ Then set the notification style to **Alerts** again in System Settings.
 | `raid-monitor.sh` | Main monitoring script |
 | `notify-helper.swift` | Source for the notification helper — audit before compiling |
 | `notify-helper-Info.plist` | App bundle identity (`CFBundleIdentifier`, icon reference, etc.) |
-| `AppIcon.icns` | *(Optional)* Custom notification icon — add before running `./install.sh` |
+| `AppIcon.png` | *(Optional)* Custom icon source (1024×1024 px) — converted to `.icns` by the installer |
 | `config.sh.template` | Config template copied during installation |
 | `com.user.raid-monitor.plist` | LaunchAgent plist template |
 | `install.sh` | Installer / uninstaller |

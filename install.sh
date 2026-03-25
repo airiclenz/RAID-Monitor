@@ -160,23 +160,52 @@ cp "$SRC_NOTIFY_PLIST" "$DEST_NOTIFY_INFOPLIST"
 ok "Info.plist: ${DEST_NOTIFY_INFOPLIST}"
 
 # ---------------------------------------------------------------------------
-# Step 3a: Install app icon (optional)
+# Step 3a: Build app icon from AppIcon.png (optional)
 #
-# Drop AppIcon.icns into the project directory to have it appear in
-# notifications and System Settings → Notifications. If absent, the
-# generic macOS icon placeholder is used.
+# Place a 1024×1024 AppIcon.png in the project directory to get a custom
+# icon in notifications and System Settings → Notifications.
+#
+# The PNG is converted to .icns using sips + iconutil (both built into macOS).
+# The iconset directory MUST end with ".iconset" — so we create it as a named
+# subdirectory inside a plain temp dir, not via mktemp's own naming.
 # ---------------------------------------------------------------------------
-local SRC_ICON="${SCRIPT_DIR}/AppIcon.icns"
+local SRC_ICON_PNG="${SCRIPT_DIR}/AppIcon.png"
 local DEST_RESOURCES="${DEST_NOTIFY_APP}/Contents/Resources"
 local DEST_ICNS="${DEST_RESOURCES}/AppIcon.icns"
+local DEST_NOTIF_PNG="${DEST_RESOURCES}/notification-icon.png"
 
-if [[ -f "$SRC_ICON" ]]; then
-    step "Installing app icon"
+if [[ -f "$SRC_ICON_PNG" ]]; then
+    step "Converting AppIcon.png → AppIcon.icns"
     mkdir -p "$DEST_RESOURCES"
-    cp "$SRC_ICON" "$DEST_ICNS"
+
+    local tmp_dir iconset
+    tmp_dir=$(mktemp -d)
+    iconset="${tmp_dir}/AppIcon.iconset"   # must end in .iconset for iconutil
+    mkdir "$iconset"
+
+    # All ten required iconset files — no other filenames are accepted by iconutil
+    sips -z 16   16   "$SRC_ICON_PNG" --out "${iconset}/icon_16x16.png"      > /dev/null
+    sips -z 32   32   "$SRC_ICON_PNG" --out "${iconset}/icon_16x16@2x.png"   > /dev/null
+    sips -z 32   32   "$SRC_ICON_PNG" --out "${iconset}/icon_32x32.png"      > /dev/null
+    sips -z 64   64   "$SRC_ICON_PNG" --out "${iconset}/icon_32x32@2x.png"   > /dev/null
+    sips -z 128  128  "$SRC_ICON_PNG" --out "${iconset}/icon_128x128.png"    > /dev/null
+    sips -z 256  256  "$SRC_ICON_PNG" --out "${iconset}/icon_128x128@2x.png" > /dev/null
+    sips -z 256  256  "$SRC_ICON_PNG" --out "${iconset}/icon_256x256.png"    > /dev/null
+    sips -z 512  512  "$SRC_ICON_PNG" --out "${iconset}/icon_256x256@2x.png" > /dev/null
+    sips -z 512  512  "$SRC_ICON_PNG" --out "${iconset}/icon_512x512.png"    > /dev/null
+    sips -z 1024 1024 "$SRC_ICON_PNG" --out "${iconset}/icon_512x512@2x.png" > /dev/null
+
+    iconutil -c icns "$iconset" -o "$DEST_ICNS" || die "iconutil failed — check that AppIcon.png is a valid PNG"
+    rm -rf "$tmp_dir"
     ok "Icon installed: ${DEST_ICNS}"
+
+    # Also copy the source PNG as the notification attachment thumbnail.
+    # This is embedded directly in each notification banner, bypassing the
+    # corner-icon rendering path that can show a white square for ad-hoc signed bundles.
+    cp "$SRC_ICON_PNG" "$DEST_NOTIF_PNG"
+    ok "Notification attachment icon: ${DEST_NOTIF_PNG}"
 else
-    info "No AppIcon.icns in project directory — skipping icon (generic icon will be used)"
+    info "No AppIcon.png in project directory — skipping icon (generic icon will be used)"
 fi
 
 step "Signing notification helper app bundle (ad-hoc)"
@@ -187,6 +216,14 @@ ok "Signed: ${DEST_NOTIFY_APP}"
 
 # Verify
 codesign --verify "$DEST_NOTIFY_APP" 2>/dev/null && ok "Signature verified" || info "Signature verification skipped"
+
+# Register with Launch Services so macOS can resolve the app icon in
+# notification banners. Without this, the corner icon shows as a white square.
+step "Registering app bundle with Launch Services"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -f "$DEST_NOTIFY_APP" \
+    && ok "Registered: ${DEST_NOTIFY_APP}" \
+    || info "lsregister failed — corner icon in notifications may appear as a white square"
 
 # ---------------------------------------------------------------------------
 # Step 4: Install config (never overwrite an existing config)
