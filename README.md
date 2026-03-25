@@ -39,7 +39,7 @@ The default icon is from by Icontoaster.com (Michael Ludwig).
    This will:
    - Copy `raid-monitor.sh` to `~/bin/`
    - Compile and bundle the notification helper (`raid-monitor-notify.app`)
-   - Install the icon into the app bundle if `AppIcon.icns` is present
+   - Install the icon into the app bundle if `AppIcon.png` is present
    - Install the config template to `~/.config/raid-monitor/config.sh`
    - Install and load the LaunchAgent
 
@@ -337,7 +337,7 @@ Then set the notification style to **Alerts** again in System Settings.
 
 - Monitors **Apple Software RAID** only (`diskutil appleRAID`). Does not support hardware RAID controllers or SoftRAID.
 - Does not repair arrays — alerts only.
-- SMART data monitoring is not included in v1.0.
+- SMART passthrough is not available on all USB enclosures — check with `smartctl -H /dev/diskN` before enabling `SMART_ENABLED`.
 
 ---
 

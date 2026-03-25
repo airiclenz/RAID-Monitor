@@ -1,7 +1,7 @@
 # macOS Software RAID Monitor — Design Specification
 
 **Project:** macos-raid-monitor
-**Version:** 1.3.0
+**Version:** 1.4.0
 **Status:** Draft
 **Last Updated:** 2026-03-25
 
@@ -11,6 +11,7 @@
 
 | Version | Change |
 |---|---|
+| 1.4.0 | Renamed bundle namespace `com.user` → `com.airic-lenz`; added `--status` flag (live status without notification); enhanced `--test` to show live array + SMART data and embed it in the test notification body; refactored `_show_current_status` into `_load_live_state` / `_show_current_status` / `_build_status_body` for explicit data flow; added Step 0 to install.sh to remove any previous installation (including old namespaces) before reinstalling; fixed zsh `status` reserved variable clash in display functions; fixed awk member-status parser to strip bare byte-count size fields (macOS format change); removed `UNNotificationAttachment` thumbnail (corner icon now renders correctly after icon pipeline fix) |
 | 1.3.0 | Added SMART health monitoring: `_load_smart_data`, `_check_smart_health`, `_compare_smart_alerts`; `SMART_ENABLED` config flag; SMART state persisted per member; `--test` mode reports SMART status; removed SMART from Non-Goals and Future Considerations |
 | 1.2.0 | Added custom notification icon pipeline (PNG → icns via sips/iconutil); added `UNNotificationAttachment` thumbnail to work around white-square rendering for ad-hoc signed bundles; corrected `info` interruption level from `.passive` to `.active`; added `lsregister` call to register bundle with Launch Services; introduced `VERSION` file and `APP_VERSION` token substitution for parametric versioning; updated file layout to reflect app bundle structure |
 | 1.1.0 | Replaced `osascript` with compiled Swift notification helper; changed state format from JSON to flat key=value; committed to `config.sh` only; simplified log rotation; added USB transient detection; added `--test` mode; fixed LaunchAgent environment; clarified build dependency |
@@ -36,7 +37,7 @@ A lightweight, dependency-minimal macOS monitoring daemon and notification syste
 - This tool does not replace Disk Utility or `diskutil`
 - This tool is not a GUI application
 - This tool does not support hardware RAID controllers or third-party RAID software (SoftRAID, etc.)
-- This tool does not repair or manage RAID arrays based on SMART data
+- SMART passthrough is not available on all USB enclosures; `UNSUPPORTED` is logged silently
 
 ---
 
@@ -207,14 +208,18 @@ raid-monitor.sh --test
 ```
 
 **Behaviour in test mode:**
-- Skips `diskutil` query and state comparison
-- Fires a test Notification Center alert: *"RAID Monitor test — installation verified"*
+- Runs pre-flight checks (notify helper, data directory, config file, `diskutil`, `smartctl` if enabled)
+- Queries `diskutil appleRAID list` and runs SMART checks (if enabled) via `_load_live_state`
+- Displays a live status table (same output as `--status`)
+- Fires a test notification whose body contains the real current array and member status
 - Writes a test entry to the log file
 - Sends a test email if `EMAIL_ENABLED=true`
 - Exits 0 on success, 1 on any failure
-- Does not read or modify `state`
+- Does not read or modify the `state` file
 
-This allows the user to verify the full notification pipeline immediately after installation, before the first scheduled poll.
+This allows the user to verify the full notification pipeline and confirm that real array data is correctly parsed and delivered immediately after installation.
+
+**`--status` flag** (added in 1.4.0): prints the same live status table as `--test` but sends no notification and writes nothing to the log. Intended for repeated on-demand checks.
 
 ### 4.9 SMART Health Monitoring (optional, flag-controlled)
 
@@ -295,8 +300,10 @@ array_0_member_1_smart=PASSED
 │  1. Load config                     │
 │  2. Run: diskutil appleRAID list    │
 │  3. Parse output → current state    │
+│  3a. SMART check per member disk    │
+│     (if SMART_ENABLED=true)         │
 │  4. Load state file → prior state   │
-│  5. Compare states                  │
+│  5. Compare RAID + SMART states     │
 │  6. If disappeared: re-check after  │
 │     TRANSIENT_RECHECK_SECONDS       │
 │  7. If changed → notify + log       │
@@ -378,7 +385,7 @@ Installation is handled by `install.sh`. No installer package (`.pkg`) is requir
 3. Copies `raid-monitor.sh` to `~/bin/` (with token substitution)
 4. Compiles `notify-helper.swift` → `~/bin/raid-monitor-notify.app/Contents/MacOS/raid-monitor-notify`
 5. Installs `notify-helper-Info.plist` to the app bundle (with version token substituted)
-6. If `AppIcon.png` is present: converts it to `.icns` using `sips` + `iconutil`, installs to `Resources/AppIcon.icns`, and copies the PNG to `Resources/notification-icon.png`
+6. If `AppIcon.png` is present: converts it to `.icns` using `sips` + `iconutil` and installs to `Resources/AppIcon.icns`
 7. Ad-hoc code-signs the entire app bundle: `codesign --sign - --force --deep`
 8. Registers the bundle with Launch Services (`lsregister`) so macOS resolves the corner icon in notification banners
 9. Installs config template to `~/.config/raid-monitor/config.sh` (only if not already present)
@@ -425,7 +432,7 @@ Installation is handled by `install.sh`. No installer package (`.pkg`) is requir
         <key>HOME</key>
         <string>/Users/USERNAME</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/USERNAME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
     <key>StandardOutPath</key>
     <string>/Users/USERNAME/.local/share/raid-monitor/raid-monitor-stdout.log</string>
@@ -454,6 +461,7 @@ Installation is handled by `install.sh`. No installer package (`.pkg`) is requir
    - For each member: `#`, `DevNode`, `UUID`, `Status`, `Size`
 3. Handle the `Rebuilding` sub-state: member status field contains `% (Rebuilding)` — extract percentage
 4. Be tolerant of extra whitespace and minor formatting differences across macOS versions
+5. Strip the trailing size field from each member line — macOS versions differ: older versions emit `3.64 TB (N Bytes)`, newer versions emit a bare byte integer (e.g. `4000443039744`) with no unit label. Both forms must be stripped to leave only the status string.
 
 **Example member status values to handle:**
 - `Online`
@@ -469,9 +477,11 @@ Installation is handled by `install.sh`. No installer package (`.pkg`) is requir
 ```
 Title:    RAID Alert — G-Raid
 Subtitle: Status: Degraded
-Body:     Member disk9s2 is Rebuilding (8%). Check Disk Utility.
-          [2026-03-25 14:32]
+Body:     #0 disk8s2: Online (SMART: PASSED). #1 disk9s2: 8% (Rebuilding) (SMART: PASSED).
+          Check Disk Utility.  [2026-03-25 14:32]
 ```
+
+The body includes per-member device node, status (including rebuild percentage), and SMART health if `SMART_ENABLED=true`. SMART is omitted from the summary when `SMART_ENABLED=false`.
 
 ### Email (plain text)
 ```
@@ -551,37 +561,31 @@ The items below are small, self-contained changes that add meaningful value with
 
 **Proposed change:** After a first-run state write, check whether any array's status is not `Online`. If so, fire a notification immediately with the current status. This requires a single additional block after `_write_state` on the first-run path — no new config setting needed.
 
-### 15.2 `--status` CLI flag
-
-**Current behaviour:** Checking the current RAID state requires running `diskutil appleRAID list` directly.
-
-**Proposed change:** Add `raid-monitor.sh --status` to print a human-readable summary of the last persisted state (from the state file) alongside the current wall-clock age of that state. Implementation: read the state file, format output, exit. No `diskutil` call needed. Useful for quick checks without waiting for the next poll.
-
-### 15.3 Per-member status tracking in state file
+### 15.2 Per-member status tracking in state file
 
 **Current behaviour:** Member status values are written to the state file but not compared between polls. Only the array-level `Status` field drives alerts.
 
 **Proposed change:** During `_compare_and_alert`, also diff per-member statuses. Alert (warning) when a member transitions from `Online` to any other status, even if the array-level status has not yet changed (which can happen briefly during degradation). This gives earlier warning at no additional polling cost.
 
-### 15.4 Suppress repeated alerts for the same degraded state
+### 15.3 Suppress repeated alerts for the same degraded state
 
 **Current behaviour:** An alert fires once when the status changes (e.g. Online → Degraded). If the daemon restarts while the array is still Degraded, a new alert fires because the state transitions from no-prior-state to Degraded.
 
 **Proposed change:** On first run (or after restart), suppress alerts for already-degraded states — only alert if the persisted state was previously `Online` (or is genuinely new). Alternatively, add a `last_alerted_status` key to the state file so repeated daemon restarts do not re-fire alerts for the same condition.
 
-### 15.5 Stalled rebuild detection
+### 15.4 Stalled rebuild detection
 
 **Current behaviour:** A "Rebuilding" alert fires once when rebuilding begins. No further alerts fire during the rebuild unless the state changes.
 
 **Proposed change:** Track the rebuild percentage across polls. If the percentage has not increased after N consecutive polls (configurable, default: 3), fire a warning: "Rebuild appears stalled at X%." Implementation: add `array_N_rebuild_pct` and `array_N_rebuild_stall_count` to the state file. This is meaningful for USB enclosures where a stalled rebuild may indicate a loose connection.
 
-### 15.6 `launchctl bootstrap` / `bootout` on macOS 13+
+### 15.5 `launchctl bootstrap` / `bootout` on macOS 13+
 
 **Current behaviour:** `install.sh` uses `launchctl load` / `unload`, which are deprecated in macOS 13 Ventura (they still work but print deprecation warnings in some contexts).
 
 **Proposed change:** Use `launchctl bootstrap gui/$(id -u) "$DEST_PLIST"` and `launchctl bootout gui/$(id -u) "$DEST_PLIST"` instead. These are the modern equivalents for user-domain LaunchAgents and suppress the deprecation path. The installer can detect macOS version via `sw_vers -productVersion` to apply the correct form.
 
-### 15.7 Configurable notification sound
+### 15.6 Configurable notification sound
 
 **Current behaviour:** Sound behaviour is fixed in `notify-helper.swift`: default system alert sound for warning/critical, silent for info.
 
