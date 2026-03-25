@@ -2,18 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  LaunchAgent for com.user.raid-monitor
+  LaunchAgent for com.airic-lenz.raid-monitor
   Template: INSTALL_PATH and USERNAME are replaced by install.sh
-  Install location: ~/Library/LaunchAgents/com.user.raid-monitor.plist
+  Install location: ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
 
   After editing this file manually, reload with:
-    launchctl unload  ~/Library/LaunchAgents/com.user.raid-monitor.plist
-    launchctl load    ~/Library/LaunchAgents/com.user.raid-monitor.plist
+    launchctl unload  ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
+    launchctl load    ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
 -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.user.raid-monitor</string>
+    <string>com.airic-lenz.raid-monitor</string>
 
     <key>ProgramArguments</key>
     <array>

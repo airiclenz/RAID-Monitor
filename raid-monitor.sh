@@ -1,6 +1,6 @@
 #!/bin/zsh
 # raid-monitor.sh — macOS Apple Software RAID health monitor
-# Version: 1.0.0
+# Version: APP_VERSION
 # See technical-design-specification.md for full design rationale.
 #
 # Usage:
@@ -12,6 +12,7 @@ set -uo pipefail
 # ---------------------------------------------------------------------------
 # Paths — always use $HOME; launchd does not expand ~
 # ---------------------------------------------------------------------------
+readonly VERSION="APP_VERSION"
 readonly SCRIPT_PATH="${0:A}"
 readonly SCRIPT_DIR="${SCRIPT_PATH:h}"
 readonly NOTIFY_BIN="${SCRIPT_DIR}/raid-monitor-notify.app/Contents/MacOS/raid-monitor-notify"
@@ -283,7 +284,7 @@ _send_email() {
     local ts
     ts=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
     local full_body
-    printf -v full_body '%s\n\nTime: %s\n\n-- raid-monitor v1.0.0' "$body_text" "$ts"
+    printf -v full_body '%s\n\nTime: %s\n\n-- raid-monitor v%s' "$body_text" "$ts" "$VERSION"
 
     local headers
     printf -v headers 'To: %s\nSubject: %s\nContent-Type: text/plain; charset=utf-8\n' \
@@ -517,7 +518,7 @@ _handle_status_change() {
 # --test mode
 # ---------------------------------------------------------------------------
 _test_mode() {
-    printf 'raid-monitor v1.0.0 — installation test\n\n'
+    printf 'raid-monitor v%s — installation test\n\n' "$VERSION"
 
     local ok=true
 
@@ -528,7 +529,7 @@ _test_mode() {
         printf '[FAIL] Notification helper not found or not executable: %s\n' "$NOTIFY_BIN" >&2
         printf '       Compile it with:\n' >&2
         printf '         swiftc notify-helper.swift -o %s\n' "$NOTIFY_BIN" >&2
-        printf '         codesign --sign - --identifier com.user.raid-monitor %s\n' "$NOTIFY_BIN" >&2
+        printf '         codesign --sign - --identifier com.airic-lenz.raid-monitor %s\n' "$NOTIFY_BIN" >&2
         ok=false
     fi
 
@@ -580,7 +581,7 @@ _test_mode() {
     if "$NOTIFY_BIN" \
             --title    "RAID Monitor" \
             --subtitle "Installation verified" \
-            --body     "raid-monitor v1.0.0 is correctly installed and can deliver notifications." \
+            --body     "raid-monitor v${VERSION} is correctly installed and can deliver notifications." \
             --level    "info" \
             2>>"$LOG_FILE"; then
         printf '[OK]   Test notification sent\n'
@@ -654,7 +655,7 @@ main() {
     _load_config
     _rotate_log  # Re-check with potentially updated LOG_MAX_SIZE_MB
 
-    _log INFO "Poll started (v1.0.0)"
+    _log INFO "Poll started (v${VERSION})"
 
     # 1. Query diskutil
     local diskutil_output

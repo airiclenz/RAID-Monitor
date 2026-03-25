@@ -12,7 +12,7 @@
 //
 // Compile and sign:
 //   swiftc notify-helper.swift -o raid-monitor-notify
-//   codesign --sign - --identifier "com.user.raid-monitor" raid-monitor-notify
+//   codesign --sign - --identifier "com.airic-lenz.raid-monitor" raid-monitor-notify
 
 import Foundation
 import UserNotifications
@@ -66,7 +66,7 @@ let content = UNMutableNotificationContent()
 content.title = title
 if !subtitle.isEmpty { content.subtitle = subtitle }
 content.body = body
-content.categoryIdentifier = "com.user.raid-monitor"
+content.categoryIdentifier = "com.airic-lenz.raid-monitor"
 
 if #available(macOS 12.0, *) {
     switch level {
@@ -118,7 +118,7 @@ center.requestAuthorization(options: [.alert, .sound]) { granted, authError in
         content.attachments = [attachment]
     }
 
-    let identifier = "com.user.raid-monitor.\(Int(Date().timeIntervalSince1970))"
+    let identifier = "com.airic-lenz.raid-monitor.\(Int(Date().timeIntervalSince1970))"
     let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
 
     center.add(request) { postError in

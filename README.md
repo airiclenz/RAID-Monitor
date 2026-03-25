@@ -140,10 +140,10 @@ TRANSIENT_RECHECK_SECONDS=60
 
 ```sh
 # 1. Edit ~/.config/raid-monitor/config.sh  →  POLL_INTERVAL_SECONDS=600
-# 2. Edit ~/Library/LaunchAgents/com.user.raid-monitor.plist  →  <integer>600</integer>
+# 2. Edit ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist  →  <integer>600</integer>
 # 3. Reload:
-launchctl unload ~/Library/LaunchAgents/com.user.raid-monitor.plist
-launchctl load   ~/Library/LaunchAgents/com.user.raid-monitor.plist
+launchctl unload ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
+launchctl load   ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
 ```
 
 ### Email alerts (optional)
@@ -225,7 +225,7 @@ LaunchAgent stdout and stderr are captured separately:
     raid-monitor-stderr.log                  LaunchAgent stderr
 
 ~/Library/LaunchAgents/
-    com.user.raid-monitor.plist              LaunchAgent definition
+    com.airic-lenz.raid-monitor.plist              LaunchAgent definition
 ```
 
 ---
@@ -253,13 +253,13 @@ diskutil appleRAID list
 **Stop monitoring temporarily:**
 
 ```sh
-launchctl unload ~/Library/LaunchAgents/com.user.raid-monitor.plist
+launchctl unload ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
 ```
 
 **Resume monitoring:**
 
 ```sh
-launchctl load ~/Library/LaunchAgents/com.user.raid-monitor.plist
+launchctl load ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
 ```
 
 ---
@@ -273,7 +273,7 @@ Open **System Settings → Notifications → RAID Monitor** and set **Notificati
 If you recently added a custom icon and re-ran `./install.sh`, the notification registration may be stale. Reset it and re-grant permission:
 
 ```sh
-tccutil reset UserNotifications com.user.raid-monitor
+tccutil reset UserNotifications com.airic-lenz.raid-monitor
 ~/bin/raid-monitor.sh --test
 ```
 
@@ -305,6 +305,7 @@ Then set the notification style to **Alerts** again in System Settings.
 | `notify-helper-Info.plist` | App bundle identity (`CFBundleIdentifier`, icon reference, etc.) |
 | `AppIcon.png` | *(Optional)* Custom icon source (1024×1024 px) — converted to `.icns` by the installer |
 | `config.sh.template` | Config template copied during installation |
-| `com.user.raid-monitor.plist` | LaunchAgent plist template |
+| `com.airic-lenz.raid-monitor.plist` | LaunchAgent plist template |
 | `install.sh` | Installer / uninstaller |
+| `VERSION` | Single source of truth for the version number — read by `install.sh` at install time |
 | `technical-design-specification.md` | Full design rationale and specification |

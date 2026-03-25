@@ -34,7 +34,8 @@ SRC_MONITOR="${SCRIPT_DIR}/raid-monitor.sh"
 SRC_SWIFT="${SCRIPT_DIR}/notify-helper.swift"
 SRC_NOTIFY_PLIST="${SCRIPT_DIR}/notify-helper-Info.plist"
 SRC_CONFIG="${SCRIPT_DIR}/config.sh.template"
-SRC_PLIST="${SCRIPT_DIR}/com.user.raid-monitor.plist"
+SRC_PLIST="${SCRIPT_DIR}/com.airic-lenz.raid-monitor.plist"
+SRC_VERSION="${SCRIPT_DIR}/VERSION"
 
 # Destination paths
 INSTALL_BIN="${HOME}/bin"
@@ -49,8 +50,8 @@ DEST_CONFIG_DIR="${HOME}/.config/raid-monitor"
 DEST_CONFIG="${DEST_CONFIG_DIR}/config.sh"
 DEST_DATA_DIR="${HOME}/.local/share/raid-monitor"
 DEST_PLIST_DIR="${HOME}/Library/LaunchAgents"
-DEST_PLIST="${DEST_PLIST_DIR}/com.user.raid-monitor.plist"
-PLIST_LABEL="com.user.raid-monitor"
+DEST_PLIST="${DEST_PLIST_DIR}/com.airic-lenz.raid-monitor.plist"
+PLIST_LABEL="com.airic-lenz.raid-monitor"
 
 # ---------------------------------------------------------------------------
 # Uninstall
@@ -104,7 +105,7 @@ step "Pre-flight checks"
 # Verify source files are present
 local missing=false
 local src
-for src in "$SRC_MONITOR" "$SRC_SWIFT" "$SRC_NOTIFY_PLIST" "$SRC_CONFIG" "$SRC_PLIST"; do
+for src in "$SRC_MONITOR" "$SRC_SWIFT" "$SRC_NOTIFY_PLIST" "$SRC_CONFIG" "$SRC_PLIST" "$SRC_VERSION"; do
     if [[ ! -f "$src" ]]; then
         err "Required source file not found: ${src}"
         missing=true
@@ -112,6 +113,10 @@ for src in "$SRC_MONITOR" "$SRC_SWIFT" "$SRC_NOTIFY_PLIST" "$SRC_CONFIG" "$SRC_P
 done
 $missing && die "Run install.sh from the RAID Monitor project directory."
 ok "All source files present"
+
+APP_VERSION=$(<"$SRC_VERSION")
+APP_VERSION="${APP_VERSION// /}"   # strip any accidental whitespace
+ok "Version: ${APP_VERSION}"
 
 # Check for swiftc (required to compile notify-helper.swift)
 if ! command -v swiftc &>/dev/null; then
@@ -139,9 +144,10 @@ ok "Directories ready"
 # Step 2: Install main script
 # ---------------------------------------------------------------------------
 step "Installing raid-monitor.sh"
-cp "$SRC_MONITOR" "$DEST_MONITOR"
+sed -e "s|APP_VERSION|${APP_VERSION}|g" "$SRC_MONITOR" > "$DEST_MONITOR" \
+    || die "Failed to write ${DEST_MONITOR}"
 chmod +x "$DEST_MONITOR"
-ok "Installed: ${DEST_MONITOR}"
+ok "Installed: ${DEST_MONITOR} (v${APP_VERSION})"
 
 # ---------------------------------------------------------------------------
 # Step 3: Build notification helper app bundle
@@ -156,7 +162,8 @@ swiftc "$SRC_SWIFT" -o "$DEST_NOTIFY" 2>&1 || die "Swift compilation failed. Che
 ok "Compiled binary: ${DEST_NOTIFY}"
 
 step "Installing app bundle Info.plist"
-cp "$SRC_NOTIFY_PLIST" "$DEST_NOTIFY_INFOPLIST"
+sed -e "s|APP_VERSION|${APP_VERSION}|g" "$SRC_NOTIFY_PLIST" > "$DEST_NOTIFY_INFOPLIST" \
+    || die "Failed to write ${DEST_NOTIFY_INFOPLIST}"
 ok "Info.plist: ${DEST_NOTIFY_INFOPLIST}"
 
 # ---------------------------------------------------------------------------

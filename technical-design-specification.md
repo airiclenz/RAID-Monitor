@@ -1,7 +1,7 @@
 # macOS Software RAID Monitor — Design Specification
 
 **Project:** macos-raid-monitor
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Status:** Draft
 **Last Updated:** 2026-03-25
 
@@ -11,6 +11,7 @@
 
 | Version | Change |
 |---|---|
+| 1.2.0 | Added custom notification icon pipeline (PNG → icns via sips/iconutil); added `UNNotificationAttachment` thumbnail to work around white-square rendering for ad-hoc signed bundles; corrected `info` interruption level from `.passive` to `.active`; added `lsregister` call to register bundle with Launch Services; introduced `VERSION` file and `APP_VERSION` token substitution for parametric versioning; updated file layout to reflect app bundle structure |
 | 1.1.0 | Replaced `osascript` with compiled Swift notification helper; changed state format from JSON to flat key=value; committed to `config.sh` only; simplified log rotation; added USB transient detection; added `--test` mode; fixed LaunchAgent environment; clarified build dependency |
 | 1.0.0 | Initial draft |
 
@@ -117,7 +118,7 @@ State values containing spaces must be quoted (e.g. `array_0_name="My RAID"`). T
 
 #### 4.3.1 Notification Helper — Primary Channel (Required, v1.0)
 
-Notifications are delivered via `raid-monitor-notify`, a small Swift CLI binary compiled from source during installation. This binary uses the macOS `UserNotifications` framework under its own bundle identifier (`com.user.raid-monitor`), so the notification permission is granted to **"RAID Monitor"** specifically — not to Script Editor, osascript, or any other general-purpose system tool.
+Notifications are delivered via `raid-monitor-notify`, a small Swift CLI binary compiled from source during installation. This binary uses the macOS `UserNotifications` framework under its own bundle identifier (`com.airic-lenz.raid-monitor`), so the notification permission is granted to **"RAID Monitor"** specifically — not to Script Editor, osascript, or any other general-purpose system tool.
 
 **Rationale:** `osascript display notification` registers notification permission under Script Editor, a general-purpose Apple scripting tool with broad capabilities. Granting Script Editor notification permission is imprecise. The Swift helper provides a dedicated, auditable, single-purpose identity for all notifications from this project.
 
@@ -130,7 +131,7 @@ Notifications are delivered via `raid-monitor-notify`, a small Swift CLI binary 
 - Compiled with ad-hoc code signature so macOS accepts it without requiring a paid developer account:
   ```
   swiftc notify-helper.swift -o raid-monitor-notify
-  codesign --sign - --identifier "com.user.raid-monitor" raid-monitor-notify
+  codesign --sign - --identifier "com.airic-lenz.raid-monitor" raid-monitor-notify
   ```
 
 **Notification content:**
@@ -245,7 +246,7 @@ This allows the user to verify the full notification pipeline immediately after 
 ```
 ┌─────────────────────────────────────┐
 │         launchd (macOS)             │
-│   com.user.raid-monitor.plist       │
+│   com.airic-lenz.raid-monitor.plist       │
 │   StartInterval: 300s               │
 └────────────────┬────────────────────┘
                  │ spawns every N seconds
@@ -287,28 +288,43 @@ This allows the user to verify the full notification pipeline immediately after 
     raid-monitor-stderr.log      # LaunchAgent stderr capture
 
 ~/Library/LaunchAgents/
-    com.user.raid-monitor.plist  # LaunchAgent definition
+    com.airic-lenz.raid-monitor.plist  # LaunchAgent definition
 
-~/bin/   (or /usr/local/bin/)
-    raid-monitor.sh              # Main monitoring script
-    raid-monitor-notify          # Compiled Swift notification helper
+~/bin/
+    raid-monitor.sh                          # Main monitoring script
+    raid-monitor-notify.app/                 # Notification helper (app bundle)
+        Contents/
+            Info.plist                       # Bundle identity (CFBundleIdentifier, icon ref, version)
+            MacOS/
+                raid-monitor-notify          # Compiled Swift binary
+            Resources/
+                AppIcon.icns                 # Notification corner icon (if AppIcon.png was provided)
+                notification-icon.png        # Embedded thumbnail for notification banners
 ```
+
+> **Why an app bundle?** `UNUserNotificationCenter` requires a `CFBundleIdentifier` in the calling process's `Info.plist`. A bare CLI binary has none and crashes with `SIGABRT`. Placing the binary inside an `.app` bundle with an `Info.plist` provides the required bundle identity without a full GUI app.
+
+> **Why two icon files?** `AppIcon.icns` is used by macOS for the corner icon in notification banners and in System Settings → Notifications. For ad-hoc signed bundles, macOS sometimes renders this as a white square. `notification-icon.png` is attached to each notification as a `UNNotificationAttachment` (a thumbnail on the right side of the banner), which is not affected by the same rendering path and always shows the correct image.
 
 **Source files (in project repository):**
 ```
-raid-monitor.sh                  # Main script
-notify-helper.swift              # Swift source for notification helper
+raid-monitor.sh                  # Main script (contains APP_VERSION token, substituted at install time)
+notify-helper.swift              # Swift source for notification helper (auditable before compile)
+notify-helper-Info.plist         # App bundle Info.plist template (contains APP_VERSION token)
 config.sh.template               # Config template
-com.user.raid-monitor.plist      # LaunchAgent plist template
-install.sh                       # Installation helper script
+com.airic-lenz.raid-monitor.plist      # LaunchAgent plist template (contains INSTALL_PATH and USERNAME tokens)
+install.sh                       # Installer / uninstaller
+VERSION                          # Single source of truth for the version number
+AppIcon.png                      # (Optional) Custom icon source — 1024×1024 px PNG
 README.md
+technical-design-specification.md
 ```
 
 ---
 
 ## 8. Installation
 
-Installation is achievable by following a documented sequence of shell commands. No installer package (`.pkg`) is required for v1.0.
+Installation is handled by `install.sh`. No installer package (`.pkg`) is required.
 
 **Prerequisites:**
 - Xcode Command Line Tools: `xcode-select --install`
@@ -316,45 +332,36 @@ Installation is achievable by following a documented sequence of shell commands.
 **Steps:**
 
 ```sh
-# 1. Create bin directory if needed
-mkdir -p ~/bin
+# 1. (Optional) Place AppIcon.png (1024×1024 px) in the project directory for a custom icon
+# 2. Run the installer from the project directory:
+./install.sh
+```
 
-# 2. Copy main script and make executable
-cp raid-monitor.sh ~/bin/raid-monitor.sh
-chmod +x ~/bin/raid-monitor.sh
+`install.sh` performs in order:
+1. Pre-flight checks — verifies all source files are present and `swiftc`/`codesign` are available
+2. Reads the `VERSION` file and substitutes the `APP_VERSION` token in `raid-monitor.sh` and `notify-helper-Info.plist` during installation
+3. Copies `raid-monitor.sh` to `~/bin/` (with token substitution)
+4. Compiles `notify-helper.swift` → `~/bin/raid-monitor-notify.app/Contents/MacOS/raid-monitor-notify`
+5. Installs `notify-helper-Info.plist` to the app bundle (with version token substituted)
+6. If `AppIcon.png` is present: converts it to `.icns` using `sips` + `iconutil`, installs to `Resources/AppIcon.icns`, and copies the PNG to `Resources/notification-icon.png`
+7. Ad-hoc code-signs the entire app bundle: `codesign --sign - --force --deep`
+8. Registers the bundle with Launch Services (`lsregister`) so macOS resolves the corner icon in notification banners
+9. Installs config template to `~/.config/raid-monitor/config.sh` (only if not already present)
+10. Substitutes `INSTALL_PATH` and `USERNAME` tokens in the LaunchAgent plist and installs it
+11. Loads the LaunchAgent via `launchctl load`
 
-# 3. Compile and sign the notification helper
-swiftc notify-helper.swift -o ~/bin/raid-monitor-notify
-codesign --sign - --identifier "com.user.raid-monitor" ~/bin/raid-monitor-notify
+**Icon conversion note:** `iconutil` requires the source directory to end exactly in `.iconset`. The installer creates `$(mktemp -d)/AppIcon.iconset` (a named subdirectory, not the mktemp output itself) to satisfy this constraint.
 
-# 4. Create config and data directories
-mkdir -p ~/.config/raid-monitor
-mkdir -p ~/.local/share/raid-monitor
-
-# 5. Create config from template
-cp config.sh.template ~/.config/raid-monitor/config.sh
-# Edit the config file to match your preferences
-
-# 6. Install and load LaunchAgent
-# (Replace USERNAME with your actual username in the plist first)
-cp com.user.raid-monitor.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.user.raid-monitor.plist
-
-# 7. Verify the agent is loaded
-launchctl list | grep raid-monitor
-
-# 8. Test the installation
+**First-run notification grant:**
+```sh
 ~/bin/raid-monitor.sh --test
-# macOS will prompt once: '"RAID Monitor" would like to send notifications' — click Allow
+# macOS shows a one-time prompt: '"RAID Monitor" would like to send notifications' — click Allow
 ```
 
 **Uninstallation:**
 ```sh
-launchctl unload ~/Library/LaunchAgents/com.user.raid-monitor.plist
-rm ~/Library/LaunchAgents/com.user.raid-monitor.plist
-rm ~/bin/raid-monitor.sh ~/bin/raid-monitor-notify
-rm -rf ~/.config/raid-monitor
-rm -rf ~/.local/share/raid-monitor
+./install.sh --uninstall
+# Optionally removes logs and state directory (prompted)
 ```
 
 ---
@@ -368,7 +375,7 @@ rm -rf ~/.local/share/raid-monitor
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.user.raid-monitor</string>
+    <string>com.airic-lenz.raid-monitor</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
@@ -448,7 +455,7 @@ Previous status: Online
 Action required: Monitor rebuild progress. Run:
   diskutil appleRAID list
 
--- raid-monitor v1.0.0
+-- raid-monitor vX.Y.Z
 ```
 
 ---
@@ -479,8 +486,10 @@ The helper is a minimal Swift command-line program. Key design points:
 - Posts a `UNNotificationRequest` with `trigger: nil` (deliver immediately)
 - Uses a `DispatchSemaphore` to block until the notification is posted, then exits
 - Bundle identifier is set via ad-hoc code signature at install time — no paid Apple Developer account required
-- The `--level` flag maps to notification `interruptionLevel`: `.passive` (info), `.active` (warning), `.timeSensitive` (critical)
-- Exit codes: `0` success, `1` authorisation denied, `2` posting error
+- The `--level` flag maps to notification `interruptionLevel`: `.active` (info, warning), `.timeSensitive` (critical — breaks Focus/Do Not Disturb)
+- Sound: default alert sound for warning and critical; silent for info
+- Exit codes: `0` success, `1` authorisation denied, `2` posting error, `3` delivery timeout
+- The icon is attached to each notification as a `UNNotificationAttachment` using the bundled `notification-icon.png`; this is independent of the app bundle corner icon and renders correctly for ad-hoc signed binaries
 
 **Security:** The source is included in the repository. Users are encouraged to read `notify-helper.swift` before compiling. The binary is compiled locally from that source — no pre-built binary is distributed.
 
@@ -499,7 +508,55 @@ The following are explicitly out of scope for v1.0 but should be kept in mind wh
 
 ---
 
-## 15. Acceptance Criteria
+## 15. Low-Hanging Improvements
+
+The items below are small, self-contained changes that add meaningful value without restructuring the tool. They are ordered roughly by effort, smallest first.
+
+### 15.1 Alert on first run if array is already degraded
+
+**Current behaviour:** On first run (no prior state file), the monitor records the current state and logs "first run — no alerts." If the array is already Degraded or Failed at install time, the user receives no notification until the state changes again.
+
+**Proposed change:** After a first-run state write, check whether any array's status is not `Online`. If so, fire a notification immediately with the current status. This requires a single additional block after `_write_state` on the first-run path — no new config setting needed.
+
+### 15.2 `--status` CLI flag
+
+**Current behaviour:** Checking the current RAID state requires running `diskutil appleRAID list` directly.
+
+**Proposed change:** Add `raid-monitor.sh --status` to print a human-readable summary of the last persisted state (from the state file) alongside the current wall-clock age of that state. Implementation: read the state file, format output, exit. No `diskutil` call needed. Useful for quick checks without waiting for the next poll.
+
+### 15.3 Per-member status tracking in state file
+
+**Current behaviour:** Member status values are written to the state file but not compared between polls. Only the array-level `Status` field drives alerts.
+
+**Proposed change:** During `_compare_and_alert`, also diff per-member statuses. Alert (warning) when a member transitions from `Online` to any other status, even if the array-level status has not yet changed (which can happen briefly during degradation). This gives earlier warning at no additional polling cost.
+
+### 15.4 Suppress repeated alerts for the same degraded state
+
+**Current behaviour:** An alert fires once when the status changes (e.g. Online → Degraded). If the daemon restarts while the array is still Degraded, a new alert fires because the state transitions from no-prior-state to Degraded.
+
+**Proposed change:** On first run (or after restart), suppress alerts for already-degraded states — only alert if the persisted state was previously `Online` (or is genuinely new). Alternatively, add a `last_alerted_status` key to the state file so repeated daemon restarts do not re-fire alerts for the same condition.
+
+### 15.5 Stalled rebuild detection
+
+**Current behaviour:** A "Rebuilding" alert fires once when rebuilding begins. No further alerts fire during the rebuild unless the state changes.
+
+**Proposed change:** Track the rebuild percentage across polls. If the percentage has not increased after N consecutive polls (configurable, default: 3), fire a warning: "Rebuild appears stalled at X%." Implementation: add `array_N_rebuild_pct` and `array_N_rebuild_stall_count` to the state file. This is meaningful for USB enclosures where a stalled rebuild may indicate a loose connection.
+
+### 15.6 `launchctl bootstrap` / `bootout` on macOS 13+
+
+**Current behaviour:** `install.sh` uses `launchctl load` / `unload`, which are deprecated in macOS 13 Ventura (they still work but print deprecation warnings in some contexts).
+
+**Proposed change:** Use `launchctl bootstrap gui/$(id -u) "$DEST_PLIST"` and `launchctl bootout gui/$(id -u) "$DEST_PLIST"` instead. These are the modern equivalents for user-domain LaunchAgents and suppress the deprecation path. The installer can detect macOS version via `sw_vers -productVersion` to apply the correct form.
+
+### 15.7 Configurable notification sound
+
+**Current behaviour:** Sound behaviour is fixed in `notify-helper.swift`: default system alert sound for warning/critical, silent for info.
+
+**Proposed change:** Expose a `NOTIFY_SOUND` config option (`true`/`false`, default `true`). Pass a `--sound` flag to the notify helper, which then conditionally sets `content.sound`. Useful for users who prefer silent notifications alongside the Focus / Notification Center UI.
+
+---
+
+## 16. Acceptance Criteria
 
 The implementation is considered complete for v1.0 when:
 

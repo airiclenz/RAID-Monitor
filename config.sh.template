@@ -10,10 +10,10 @@
 # After changing any value, the LaunchAgent does not need to be reloaded —
 # the new value takes effect on the next poll.
 # EXCEPTION: if you change POLL_INTERVAL_SECONDS, you must also update the
-# StartInterval value in ~/Library/LaunchAgents/com.user.raid-monitor.plist
+# StartInterval value in ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
 # and reload the agent:
-#   launchctl unload ~/Library/LaunchAgents/com.user.raid-monitor.plist
-#   launchctl load   ~/Library/LaunchAgents/com.user.raid-monitor.plist
+#   launchctl unload ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
+#   launchctl load   ~/Library/LaunchAgents/com.airic-lenz.raid-monitor.plist
 
 # ---------------------------------------------------------------------------
 # Polling
