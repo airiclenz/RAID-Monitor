@@ -134,6 +134,37 @@ command -v codesign &>/dev/null || die "codesign not found — is Xcode Command 
 ok "codesign found"
 
 # ---------------------------------------------------------------------------
+# Step 0: Remove any previous installation
+#
+# Catches both the current label and any old namespace (e.g. com.user.*) by
+# scanning ~/Library/LaunchAgents for plists whose filename ends in
+# "raid-monitor.plist".
+# ---------------------------------------------------------------------------
+step "Removing previous installation (if any)"
+
+local old_plist
+for old_plist in "${DEST_PLIST_DIR}"/*.raid-monitor.plist(N); do
+    local old_label
+    old_label=$(defaults read "$old_plist" Label 2>/dev/null || true)
+    if [[ -n "$old_label" ]] && launchctl list "$old_label" &>/dev/null; then
+        launchctl unload "$old_plist" 2>/dev/null || true
+        ok "Unloaded LaunchAgent: ${old_label}"
+    fi
+    rm -f "$old_plist"
+    ok "Removed plist: ${old_plist}"
+done
+
+# Remove previous app bundle and main script
+if [[ -d "$DEST_NOTIFY_APP" ]]; then
+    rm -rf "$DEST_NOTIFY_APP"
+    ok "Removed previous app bundle: ${DEST_NOTIFY_APP}"
+fi
+if [[ -f "$DEST_MONITOR" ]]; then
+    rm -f "$DEST_MONITOR"
+    ok "Removed previous script: ${DEST_MONITOR}"
+fi
+
+# ---------------------------------------------------------------------------
 # Step 1: Create directories
 # ---------------------------------------------------------------------------
 step "Creating directories"
@@ -272,13 +303,6 @@ ok "Plist tokens substituted correctly"
 # Step 6: Load the LaunchAgent
 # ---------------------------------------------------------------------------
 step "Loading LaunchAgent"
-
-# Unload first if already registered (e.g. re-install scenario)
-if launchctl list "$PLIST_LABEL" &>/dev/null; then
-    info "LaunchAgent already loaded — unloading for re-install"
-    launchctl unload "$DEST_PLIST" 2>/dev/null || true
-    sleep 1
-fi
 
 launchctl load "$DEST_PLIST" || die "launchctl load failed. Check ${DEST_PLIST} for errors."
 ok "LaunchAgent loaded"
