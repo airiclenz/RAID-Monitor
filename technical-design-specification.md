@@ -1,7 +1,7 @@
 # macOS Software RAID Monitor — Design Specification
 
 **Project:** macos-raid-monitor
-**Version:** 1.4.0
+**Version:** 1.5.0
 **Status:** Draft
 **Last Updated:** 2026-03-25
 
@@ -11,6 +11,7 @@
 
 | Version | Change |
 |---|---|
+| 1.5.0 | Config sync on reinstall: `install.sh` Step 4 now merges new keys from `config.sh.template` into an existing `~/.config/raid-monitor/config.sh` rather than leaving it unchanged. Missing keys are appended with their associated comment blocks under a dated header; existing user edits are never overwritten. |
 | 1.4.0 | Renamed bundle namespace `com.user` → `com.airic-lenz`; added `--status` flag (live status without notification); enhanced `--test` to show live array + SMART data and embed it in the test notification body; refactored `_show_current_status` into `_load_live_state` / `_show_current_status` / `_build_status_body` for explicit data flow; added Step 0 to install.sh to remove any previous installation (including old namespaces) before reinstalling; fixed zsh `status` reserved variable clash in display functions; fixed awk member-status parser to strip bare byte-count size fields (macOS format change); removed `UNNotificationAttachment` thumbnail (corner icon now renders correctly after icon pipeline fix) |
 | 1.3.0 | Added SMART health monitoring: `_load_smart_data`, `_check_smart_health`, `_compare_smart_alerts`; `SMART_ENABLED` config flag; SMART state persisted per member; `--test` mode reports SMART status; removed SMART from Non-Goals and Future Considerations |
 | 1.2.0 | Added custom notification icon pipeline (PNG → icns via sips/iconutil); added `UNNotificationAttachment` thumbnail to work around white-square rendering for ad-hoc signed bundles; corrected `info` interruption level from `.passive` to `.active`; added `lsregister` call to register bundle with Launch Services; introduced `VERSION` file and `APP_VERSION` token substitution for parametric versioning; updated file layout to reflect app bundle structure |
@@ -171,6 +172,7 @@ Notifications are delivered via `raid-monitor-notify`, a small Swift CLI binary 
 - Sourced by `raid-monitor.sh` using `source` / `.`
 - Must be created from a documented template during installation
 - If the config file is missing, all defaults are used and a warning is logged
+- On reinstall, `install.sh` merges any settings present in `config.sh.template` but absent from the existing config — appending them with their comment blocks under a dated `# New settings added by installer on YYYY-MM-DD` header. Keys already present (active or commented-out) are never duplicated or overwritten, preserving all user edits.
 
 **Rationale for shell format:** The main script is bash/zsh. Sourcing a `.sh` config file requires zero parsing. A JSON or TOML config would require an external parser or fragile hand-rolled bash parsing. The `.sh` format is standard for shell-based tools (e.g. `/etc/default/`, `/etc/sysconfig/`).
 
@@ -388,7 +390,7 @@ Installation is handled by `install.sh`. No installer package (`.pkg`) is requir
 6. If `AppIcon.png` is present: converts it to `.icns` using `sips` + `iconutil` and installs to `Resources/AppIcon.icns`
 7. Ad-hoc code-signs the entire app bundle: `codesign --sign - --force --deep`
 8. Registers the bundle with Launch Services (`lsregister`) so macOS resolves the corner icon in notification banners
-9. Installs config template to `~/.config/raid-monitor/config.sh` (only if not already present)
+9. Config install/merge: if `~/.config/raid-monitor/config.sh` does not exist, copies the template; if it already exists, appends any settings from the template that are absent from the existing file (with comments and a dated header) — user edits are never overwritten
 10. Substitutes `INSTALL_PATH` and `USERNAME` tokens in the LaunchAgent plist and installs it
 11. Loads the LaunchAgent via `launchctl load`
 

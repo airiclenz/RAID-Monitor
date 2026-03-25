@@ -257,15 +257,49 @@ step "Registering app bundle with Launch Services"
     || info "lsregister failed — corner icon in notifications may appear as a white square"
 
 # ---------------------------------------------------------------------------
-# Step 4: Install config (never overwrite an existing config)
+# Step 4: Install config — fresh install copies template; reinstall merges
+#         any new keys from the template that are absent from the existing
+#         config (so user edits are never overwritten).
 # ---------------------------------------------------------------------------
 step "Installing config"
-if [[ -f "$DEST_CONFIG" ]]; then
-    info "Config already exists — leaving unchanged: ${DEST_CONFIG}"
-else
+if [[ ! -f "$DEST_CONFIG" ]]; then
     cp "$SRC_CONFIG" "$DEST_CONFIG"
     ok "Config installed: ${DEST_CONFIG}"
     info "Edit the config to customise settings before your first use."
+else
+    local new_count=0
+    local pending_comments=""
+    local key line
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[A-Z_][A-Z0-9_]*= ]]; then
+            key="${line%%=*}"
+            # Match both active (KEY=) and commented-out (# KEY=) forms
+            if ! grep -qE "^#?[[:space:]]*${key}=" "$DEST_CONFIG" 2>/dev/null; then
+                if (( new_count == 0 )); then
+                    {
+                        printf '\n'
+                        printf '# ---------------------------------------------------------------------------\n'
+                        printf '# New settings added by installer on %s\n' "$(date '+%Y-%m-%d')"
+                        printf '# ---------------------------------------------------------------------------\n'
+                    } >> "$DEST_CONFIG"
+                fi
+                printf '%s' "$pending_comments" >> "$DEST_CONFIG"
+                printf '%s\n' "$line" >> "$DEST_CONFIG"
+                ok "New setting added to config: ${key}"
+                (( new_count++ )) || true
+            fi
+            pending_comments=""
+        else
+            pending_comments+="${line}"$'\n'
+        fi
+    done < "$SRC_CONFIG"
+
+    if (( new_count == 0 )); then
+        ok "Config up to date — no new settings: ${DEST_CONFIG}"
+    else
+        ok "${new_count} new setting(s) added to ${DEST_CONFIG}"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

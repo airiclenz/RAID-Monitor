@@ -40,7 +40,7 @@ The default icon is from by Icontoaster.com (Michael Ludwig).
    - Copy `raid-monitor.sh` to `~/bin/`
    - Compile and bundle the notification helper (`raid-monitor-notify.app`)
    - Install the icon into the app bundle if `AppIcon.png` is present
-   - Install the config template to `~/.config/raid-monitor/config.sh`
+   - Install the config template to `~/.config/raid-monitor/config.sh` (fresh install), or merge any new settings into your existing config (reinstall — your edits are never overwritten)
    - Install and load the LaunchAgent
 
 4. **Run the installation test:**
@@ -88,6 +88,8 @@ open -e ~/.config/raid-monitor/config.sh
 ```
 
 Changes take effect on the **next poll** (within 5 minutes) — no reload needed.
+
+When you re-run `./install.sh` after an update, any new settings introduced in `config.sh.template` are automatically appended to your existing config (under a dated header). Settings you have already edited are left exactly as-is.
 
 ### All settings
 
