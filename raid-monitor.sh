@@ -36,6 +36,7 @@ EMAIL_FROM=""
 LOG_MAX_SIZE_MB=5
 ARRAY_UUID_FILTER=""
 TRANSIENT_RECHECK_SECONDS=30
+SMART_ENABLED=false
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -168,8 +169,10 @@ _parse_diskutil() {
         sub(/^[[:space:]]+/, "", line)
 
         # line is now: "Status  N.N TB (N Bytes)"  or  "8% (Rebuilding)  N.N TB ..."
-        # Remove trailing size info: a number (int or decimal) followed by TB/GB/MB/KB/Bytes
+        # Some macOS versions emit a raw byte count with no unit (e.g. "4000443039744").
+        # Strip the size field: first try "N.N TB/GB/..." form, then strip any trailing number.
         sub(/[[:space:]]+[0-9][0-9]*(\.[0-9]+)?[[:space:]]+(TB|GB|MB|KB|Bytes).*$/, "", line)
+        sub(/[0-9][0-9,]*$/, "", line)
         sub(/[[:space:]]+$/, "", line)
 
         print "array_" aidx "_member_" midx "_dev=" devnode
@@ -240,6 +243,8 @@ _write_state() {
             for (( m = 0; m < mc; m++ )); do
                 printf 'array_%d_member_%d_dev=%s\n'    $i $m "${CURRENT[array_${i}_member_${m}_dev]:-}"
                 printf 'array_%d_member_%d_status=%s\n' $i $m "${CURRENT[array_${i}_member_${m}_status]:-}"
+                local smart="${CURRENT[array_${i}_member_${m}_smart]:-}"
+                [[ -n "$smart" ]] && printf 'array_%d_member_%d_smart=%s\n' $i $m "$smart"
             done
         done
     } > "$STATE_TMP" || {
@@ -367,6 +372,113 @@ find_prior_idx() {
 }
 
 # ---------------------------------------------------------------------------
+# SMART health monitoring
+# ---------------------------------------------------------------------------
+
+# Strip partition suffix to get the whole-disk device node.
+# disk8s2 → disk8,  disk10s2 → disk10,  disk8 → disk8
+_parent_disk() {
+    printf '%s' "${1%%s[0-9]*}"
+}
+
+# Run 'smartctl -H' on a whole-disk device and return a single status word:
+#   PASSED / FAILED / UNSUPPORTED / UNKNOWN
+_check_smart_health() {
+    local dev="$1"   # whole-disk devnode, e.g. disk8
+    local output
+    output=$(smartctl -H "/dev/${dev}" 2>&1) || true
+
+    if printf '%s\n' "$output" | grep -q 'SMART overall-health self-assessment test result: PASSED'; then
+        printf 'PASSED'
+    elif printf '%s\n' "$output" | grep -q 'SMART overall-health self-assessment test result: FAILED'; then
+        printf 'FAILED'
+    elif printf '%s\n' "$output" | grep -qiE 'not supported|not available|unable to detect|no SMART'; then
+        printf 'UNSUPPORTED'
+    else
+        printf 'UNKNOWN'
+    fi
+}
+
+# Run SMART checks for all current member disks and store results in CURRENT.
+# No-ops silently if SMART_ENABLED=false or smartctl is not installed.
+_load_smart_data() {
+    [[ "${SMART_ENABLED:-false}" == "true" ]] || return 0
+
+    if ! command -v smartctl &>/dev/null; then
+        _log WARN "SMART_ENABLED=true but smartctl not found — install with: brew install smartmontools"
+        return 0
+    fi
+
+    local count="${CURRENT[array_count]:-0}"
+    local i m mc dev parent health
+    for (( i = 0; i < count; i++ )); do
+        mc="${CURRENT[array_${i}_member_count]:-0}"
+        for (( m = 0; m < mc; m++ )); do
+            dev="${CURRENT[array_${i}_member_${m}_dev]:-}"
+            [[ -z "$dev" ]] && continue
+            parent=$(_parent_disk "$dev")
+            health=$(_check_smart_health "$parent")
+            CURRENT[array_${i}_member_${m}_smart]="$health"
+            _log INFO "SMART: /dev/${parent} (${dev}): ${health}"
+        done
+    done
+}
+
+# Compare SMART health in CURRENT vs PRIOR and alert on degradations.
+_compare_smart_alerts() {
+    [[ "${SMART_ENABLED:-false}" == "true" ]] || return 0
+
+    local count="${CURRENT[array_count]:-0}"
+    local i m mc uuid c_name prior_idx dev health prior_health ts email_body
+    for (( i = 0; i < count; i++ )); do
+        uuid="${CURRENT[array_${i}_uuid]:-}"
+        c_name="${CURRENT[array_${i}_name]:-unknown}"
+        mc="${CURRENT[array_${i}_member_count]:-0}"
+
+        [[ -z "$uuid" ]] && continue
+        if [[ -n "${ARRAY_UUID_FILTER:-}" && "$uuid" != "$ARRAY_UUID_FILTER" ]]; then
+            continue
+        fi
+
+        prior_idx=$(find_prior_idx "$uuid") || true
+
+        for (( m = 0; m < mc; m++ )); do
+            dev="${CURRENT[array_${i}_member_${m}_dev]:-?}"
+            health="${CURRENT[array_${i}_member_${m}_smart]:-}"
+
+            # Skip members where smartctl returned no usable result
+            [[ -z "$health" || "$health" == "UNSUPPORTED" ]] && continue
+
+            prior_health=""
+            [[ -n "$prior_idx" ]] && prior_health="${PRIOR[array_${prior_idx}_member_${m}_smart]:-}"
+
+            if [[ "$health" == "FAILED" && "$prior_health" != "FAILED" ]]; then
+                _log CRIT "SMART FAILURE: /dev/$(_parent_disk "$dev") (${dev}, array '${c_name}')"
+                ts=$(date '+%Y-%m-%d %H:%M')
+                _notify \
+                    "RAID Monitor — Drive Failure Predicted" \
+                    "Disk: ${dev} on '${c_name}'" \
+                    "SMART health FAILED. Back up data immediately.  [${ts}]" \
+                    "critical" || true
+                printf -v email_body \
+                    'SMART health check FAILED for disk %s (array: %s / %s).\n\nBack up all data immediately and replace the failing drive.\n\nRun for full details:\n  smartctl -a /dev/%s' \
+                    "$dev" "$c_name" "$uuid" "$(_parent_disk "$dev")"
+                _send_email "[RAID Monitor] SMART FAILURE — ${dev}" "$email_body" || true
+
+            elif [[ "$health" == "UNKNOWN" && "$prior_health" == "PASSED" ]]; then
+                _log WARN "SMART: /dev/$(_parent_disk "$dev") (${dev}) changed from PASSED to UNKNOWN"
+                ts=$(date '+%Y-%m-%d %H:%M')
+                _notify \
+                    "RAID Monitor — SMART Warning" \
+                    "Disk: ${dev} on '${c_name}'" \
+                    "SMART health check returned UNKNOWN. Check disk manually.  [${ts}]" \
+                    "warning" || true
+            fi
+        done
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Transient-disappearance re-check
 # Returns 0 if the array reappeared (no alert needed), 1 if still gone
 # ---------------------------------------------------------------------------
@@ -475,7 +587,10 @@ _handle_status_change() {
     for (( m = 0; m < mc; m++ )); do
         local mdev="${CURRENT[array_${cur_idx}_member_${m}_dev]:-?}"
         local mst="${CURRENT[array_${cur_idx}_member_${m}_status]:-?}"
-        member_summary+="#${m} ${mdev}: ${mst}. "
+        local msmart="${CURRENT[array_${cur_idx}_member_${m}_smart]:-}"
+        member_summary+="#${m} ${mdev}: ${mst}"
+        [[ -n "$msmart" ]] && member_summary+=" (SMART: ${msmart})"
+        member_summary+=". "
     done
     member_summary="${member_summary%. }"  # trim trailing ". "
 
@@ -515,6 +630,89 @@ _handle_status_change() {
 }
 
 # ---------------------------------------------------------------------------
+# Live status helpers — used by --test and --status
+# ---------------------------------------------------------------------------
+
+# Load live RAID + SMART data into CURRENT.
+# Returns 1 if no arrays were found or diskutil failed.
+_load_live_state() {
+    local du_out
+    du_out=$(diskutil appleRAID list 2>&1) || true
+
+    if [[ -z "$du_out" ]]; then
+        return 1
+    fi
+
+    _load_current "$du_out"
+
+    if [[ "${CURRENT[array_count]:-0}" -eq 0 ]]; then
+        return 1
+    fi
+
+    [[ "${SMART_ENABLED:-false}" == "true" ]] && _load_smart_data
+    return 0
+}
+
+# Display CURRENT state to stdout. Assumes _load_live_state has already run.
+_show_current_status() {
+    local count="${CURRENT[array_count]:-0}"
+    if [[ "$count" -eq 0 ]]; then
+        printf '  No Apple Software RAID arrays found.\n'
+        return 0
+    fi
+
+    printf '  Arrays found: %s\n' "$count"
+
+    local i m mc uuid name arr_status dev mst smart
+    for (( i = 0; i < count; i++ )); do
+        uuid="${CURRENT[array_${i}_uuid]:-}"
+        name="${CURRENT[array_${i}_name]:-unknown}"
+        arr_status="${CURRENT[array_${i}_status]:-Unknown}"
+        mc="${CURRENT[array_${i}_member_count]:-0}"
+
+        printf '\n'
+        printf '  Array:    %s\n'   "$name"
+        printf '  UUID:     %s\n'   "$uuid"
+        printf '  Status:   %s\n'   "$arr_status"
+        printf '  Members:\n'
+
+        for (( m = 0; m < mc; m++ )); do
+            dev="${CURRENT[array_${i}_member_${m}_dev]:-?}"
+            mst="${CURRENT[array_${i}_member_${m}_status]:-?}"
+            smart="${CURRENT[array_${i}_member_${m}_smart]:-}"
+            if [[ -n "$smart" ]]; then
+                printf '    #%d  %-14s  %-28s  SMART: %s\n' "$m" "$dev" "$mst" "$smart"
+            else
+                printf '    #%d  %-14s  %s\n' "$m" "$dev" "$mst"
+            fi
+        done
+    done
+    printf '\n'
+}
+
+# Build a compact multi-line notification body from CURRENT.
+# Assumes _load_live_state has already run.
+_build_status_body() {
+    local count="${CURRENT[array_count]:-0}"
+    local body=""
+    local i m mc dev mst smart arr_status
+    for (( i = 0; i < count; i++ )); do
+        arr_status="${CURRENT[array_${i}_status]:-Unknown}"
+        body+="${CURRENT[array_${i}_name]:-unknown}: ${arr_status}"$'\n'
+        mc="${CURRENT[array_${i}_member_count]:-0}"
+        for (( m = 0; m < mc; m++ )); do
+            dev="${CURRENT[array_${i}_member_${m}_dev]:-?}"
+            mst="${CURRENT[array_${i}_member_${m}_status]:-?}"
+            smart="${CURRENT[array_${i}_member_${m}_smart]:-}"
+            body+="  #${m} ${dev}: ${mst}"
+            [[ -n "$smart" ]] && body+=" | SMART: ${smart}"
+            body+=$'\n'
+        done
+    done
+    printf '%s' "$body"
+}
+
+# ---------------------------------------------------------------------------
 # --test mode
 # ---------------------------------------------------------------------------
 _test_mode() {
@@ -551,20 +749,18 @@ _test_mode() {
     # Check diskutil
     if command -v diskutil &>/dev/null; then
         printf '[OK]   diskutil found\n'
-        local du_test
-        du_test=$(diskutil appleRAID list 2>&1) || true
-        if [[ -n "$du_test" ]]; then
-            printf '[OK]   diskutil appleRAID list returned output\n'
-            # Quick parse to show array count
-            local ac
-            ac=$(printf '%s\n' "$du_test" | awk '/AppleRAID sets \(/{tmp=$0; sub(/.*\(/,"",tmp); sub(/ .*/,"",tmp); print tmp+0}')
-            printf '       Arrays currently visible: %s\n' "${ac:-0}"
-        else
-            printf '[WARN] diskutil appleRAID list returned empty output\n'
-        fi
     else
         printf '[FAIL] diskutil not found in PATH\n' >&2
         ok=false
+    fi
+
+    # Check SMART binary (optional)
+    if [[ "${SMART_ENABLED:-false}" == "true" ]]; then
+        if command -v smartctl &>/dev/null; then
+            printf '[OK]   smartctl found (%s)\n' "$(smartctl --version 2>&1 | head -1)"
+        else
+            printf '[WARN] SMART_ENABLED=true but smartctl not found — install with: brew install smartmontools\n'
+        fi
     fi
 
     if ! $ok; then
@@ -572,8 +768,20 @@ _test_mode() {
         exit 1
     fi
 
+    # Load live RAID + SMART data, then display and build notification body
+    printf '\nCurrent RAID status:\n'
+    local notif_body="raid-monitor v${VERSION} — installation verified."
+    if _load_live_state; then
+        _show_current_status
+        local status_body
+        status_body=$(_build_status_body)
+        [[ -n "$status_body" ]] && notif_body+=$'\n'"$status_body"
+    else
+        printf '  No Apple Software RAID arrays found.\n\n'
+    fi
+
     # Send test notification
-    printf '\nSending test notification...\n'
+    printf 'Sending test notification...\n'
     printf '(macOS may ask once: "RAID Monitor" would like to send notifications — click Allow)\n\n'
 
     _log INFO "[TEST] Installation test initiated"
@@ -581,7 +789,7 @@ _test_mode() {
     if "$NOTIFY_BIN" \
             --title    "RAID Monitor" \
             --subtitle "Installation verified" \
-            --body     "raid-monitor v${VERSION} is correctly installed and can deliver notifications." \
+            --body     "$notif_body" \
             --level    "info" \
             2>>"$LOG_FILE"; then
         printf '[OK]   Test notification sent\n'
@@ -675,10 +883,14 @@ main() {
 
     _log INFO "diskutil reports ${CURRENT[array_count]} array(s)"
 
+    # 2a. Check SMART health for each member disk (if enabled)
+    _load_smart_data
+
     # 3. Load prior state and compare
     if _load_state; then
         _log INFO "Prior state loaded (last checked: ${PRIOR[last_checked]:-unknown})"
         _compare_and_alert
+        _compare_smart_alerts
     else
         _log INFO "No prior state — first run. Recording current state, no alerts."
     fi
@@ -696,11 +908,19 @@ main() {
 # Entry point
 # ---------------------------------------------------------------------------
 if [[ "${1:-}" == "--test" ]]; then
-    # Config must be loaded before test mode so EMAIL_ENABLED etc. are available
     mkdir -p "$DATA_DIR"
     _rotate_log
     _load_config
     _test_mode
+fi
+
+if [[ "${1:-}" == "--status" ]]; then
+    mkdir -p "$DATA_DIR"
+    _load_config
+    printf 'RAID Monitor v%s — current status\n' "$VERSION"
+    _load_live_state || true
+    _show_current_status
+    exit 0
 fi
 
 main "$@"

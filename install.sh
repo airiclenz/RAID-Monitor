@@ -210,7 +210,6 @@ ok "Info.plist: ${DEST_NOTIFY_INFOPLIST}"
 local SRC_ICON_PNG="${SCRIPT_DIR}/AppIcon.png"
 local DEST_RESOURCES="${DEST_NOTIFY_APP}/Contents/Resources"
 local DEST_ICNS="${DEST_RESOURCES}/AppIcon.icns"
-local DEST_NOTIF_PNG="${DEST_RESOURCES}/notification-icon.png"
 
 if [[ -f "$SRC_ICON_PNG" ]]; then
     step "Converting AppIcon.png → AppIcon.icns"
@@ -236,12 +235,6 @@ if [[ -f "$SRC_ICON_PNG" ]]; then
     iconutil -c icns "$iconset" -o "$DEST_ICNS" || die "iconutil failed — check that AppIcon.png is a valid PNG"
     rm -rf "$tmp_dir"
     ok "Icon installed: ${DEST_ICNS}"
-
-    # Also copy the source PNG as the notification attachment thumbnail.
-    # This is embedded directly in each notification banner, bypassing the
-    # corner-icon rendering path that can show a white square for ad-hoc signed bundles.
-    cp "$SRC_ICON_PNG" "$DEST_NOTIF_PNG"
-    ok "Notification attachment icon: ${DEST_NOTIF_PNG}"
 else
     info "No AppIcon.png in project directory — skipping icon (generic icon will be used)"
 fi

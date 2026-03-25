@@ -1,7 +1,7 @@
 # macOS Software RAID Monitor — Design Specification
 
 **Project:** macos-raid-monitor
-**Version:** 1.2.0
+**Version:** 1.3.0
 **Status:** Draft
 **Last Updated:** 2026-03-25
 
@@ -11,6 +11,7 @@
 
 | Version | Change |
 |---|---|
+| 1.3.0 | Added SMART health monitoring: `_load_smart_data`, `_check_smart_health`, `_compare_smart_alerts`; `SMART_ENABLED` config flag; SMART state persisted per member; `--test` mode reports SMART status; removed SMART from Non-Goals and Future Considerations |
 | 1.2.0 | Added custom notification icon pipeline (PNG → icns via sips/iconutil); added `UNNotificationAttachment` thumbnail to work around white-square rendering for ad-hoc signed bundles; corrected `info` interruption level from `.passive` to `.active`; added `lsregister` call to register bundle with Launch Services; introduced `VERSION` file and `APP_VERSION` token substitution for parametric versioning; updated file layout to reflect app bundle structure |
 | 1.1.0 | Replaced `osascript` with compiled Swift notification helper; changed state format from JSON to flat key=value; committed to `config.sh` only; simplified log rotation; added USB transient detection; added `--test` mode; fixed LaunchAgent environment; clarified build dependency |
 | 1.0.0 | Initial draft |
@@ -35,7 +36,7 @@ A lightweight, dependency-minimal macOS monitoring daemon and notification syste
 - This tool does not replace Disk Utility or `diskutil`
 - This tool is not a GUI application
 - This tool does not support hardware RAID controllers or third-party RAID software (SoftRAID, etc.)
-- This tool does not monitor SMART data directly (out of scope for v1.0)
+- This tool does not repair or manage RAID arrays based on SMART data
 
 ---
 
@@ -182,6 +183,7 @@ Notifications are delivered via `raid-monitor-notify`, a small Swift CLI binary 
 | `LOG_MAX_SIZE_MB` | `5` | Max log file size before rotation |
 | `ARRAY_UUID_FILTER` | `""` | Optional: monitor only this specific array UUID |
 | `TRANSIENT_RECHECK_SECONDS` | `30` | Delay before confirming array disappearance (see §4.7) |
+| `SMART_ENABLED` | `false` | Enable SMART health checks per member disk (see §4.9). Requires `smartmontools`. |
 
 ### 4.7 USB Transient Disappearance Handling
 
@@ -213,6 +215,42 @@ raid-monitor.sh --test
 - Does not read or modify `state`
 
 This allows the user to verify the full notification pipeline immediately after installation, before the first scheduled poll.
+
+### 4.9 SMART Health Monitoring (optional, flag-controlled)
+
+When `SMART_ENABLED=true`, the monitor runs `smartctl -H /dev/<parent-disk>` on each RAID member disk after every `diskutil` poll and persists the result in the state file.
+
+**Parent disk resolution:** RAID member device nodes are partition references (e.g. `disk8s2`). SMART operates on the whole disk. The partition suffix is stripped: `diskNsM` → `diskN`.
+
+**Health status values:**
+
+| Value | Meaning |
+|---|---|
+| `PASSED` | SMART self-assessment passed — no imminent failure predicted |
+| `FAILED` | SMART predicts drive failure — immediate action required |
+| `UNSUPPORTED` | Device does not expose SMART data (common on USB enclosures without passthrough) |
+| `UNKNOWN` | `smartctl` ran but returned unrecognisable output |
+
+**Alert behaviour:**
+
+| Transition | Level | Action |
+|---|---|---|
+| Any → `FAILED` | Critical | Notification + email (if configured) |
+| `PASSED` → `UNKNOWN` | Warning | Notification |
+| Any → `UNSUPPORTED` | — | Log only, no alert |
+| No change | — | Log only |
+
+Alerts fire only on **transitions** — SMART state is persisted per member in the state file so a drive that was already `FAILED` on the previous poll does not re-alert.
+
+**Dependency:** Requires `smartmontools` (`brew install smartmontools`). If `SMART_ENABLED=true` and `smartctl` is not found, a warning is logged and SMART checks are skipped for that poll — the daemon continues normally.
+
+**USB enclosure caveat:** Many USB bridges do not expose SMART passthrough. All members will show `UNSUPPORTED` and no alerts will fire. Users should verify with `smartctl -H /dev/diskN` before enabling.
+
+**State file additions (per member when SMART_ENABLED=true):**
+```
+array_0_member_0_smart=PASSED
+array_0_member_1_smart=PASSED
+```
 
 ---
 
@@ -299,12 +337,9 @@ This allows the user to verify the full notification pipeline immediately after 
                 raid-monitor-notify          # Compiled Swift binary
             Resources/
                 AppIcon.icns                 # Notification corner icon (if AppIcon.png was provided)
-                notification-icon.png        # Embedded thumbnail for notification banners
 ```
 
 > **Why an app bundle?** `UNUserNotificationCenter` requires a `CFBundleIdentifier` in the calling process's `Info.plist`. A bare CLI binary has none and crashes with `SIGABRT`. Placing the binary inside an `.app` bundle with an `Info.plist` provides the required bundle identity without a full GUI app.
-
-> **Why two icon files?** `AppIcon.icns` is used by macOS for the corner icon in notification banners and in System Settings → Notifications. For ad-hoc signed bundles, macOS sometimes renders this as a white square. `notification-icon.png` is attached to each notification as a `UNNotificationAttachment` (a thumbnail on the right side of the banner), which is not affected by the same rendering path and always shows the correct image.
 
 **Source files (in project repository):**
 ```
@@ -489,7 +524,6 @@ The helper is a minimal Swift command-line program. Key design points:
 - The `--level` flag maps to notification `interruptionLevel`: `.active` (info, warning), `.timeSensitive` (critical — breaks Focus/Do Not Disturb)
 - Sound: default alert sound for warning and critical; silent for info
 - Exit codes: `0` success, `1` authorisation denied, `2` posting error, `3` delivery timeout
-- The icon is attached to each notification as a `UNNotificationAttachment` using the bundled `notification-icon.png`; this is independent of the app bundle corner icon and renders correctly for ad-hoc signed binaries
 
 **Security:** The source is included in the repository. Users are encouraged to read `notify-helper.swift` before compiling. The binary is compiled locally from that source — no pre-built binary is distributed.
 
@@ -499,7 +533,6 @@ The helper is a minimal Swift command-line program. Key design points:
 
 The following are explicitly out of scope for v1.0 but should be kept in mind when structuring the code:
 
-- **SMART data integration** via `smartmontools` (`brew install smartmontools`) — surface early drive health warnings
 - **Multi-array support** — monitor more than one AppleRAID set simultaneously
 - **Rebuild progress tracking** — log and alert on stalled rebuilds (percentage not increasing over N polls)
 - **Menu bar status indicator** — at this point a full native Swift app is warranted; the notification helper can be promoted to a menu bar app

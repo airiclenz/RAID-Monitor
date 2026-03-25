@@ -97,6 +97,7 @@ Changes take effect on the **next poll** (within 5 minutes) — no reload needed
 | `NOTIFY_ON_ONLINE` | `false` | Send a notification when the array returns to Online (e.g. rebuild complete). |
 | `ARRAY_UUID_FILTER` | *(empty)* | Monitor only this array UUID. Leave empty to monitor all arrays. |
 | `TRANSIENT_RECHECK_SECONDS` | `30` | Seconds to wait before confirming a disappeared array is truly gone. Prevents false alarms after wake from sleep on USB enclosures. |
+| `SMART_ENABLED` | `false` | Run a SMART health check on each RAID member disk every poll. Requires `smartmontools` (`brew install smartmontools`). |
 | `EMAIL_ENABLED` | `false` | Also send email alerts. Requires `sendmail` or `msmtp`. |
 | `EMAIL_TO` | *(empty)* | Recipient address. |
 | `EMAIL_FROM` | *(empty)* | Sender address (used in the `From:` header). |
@@ -153,6 +154,32 @@ Set `EMAIL_ENABLED=true` and provide `EMAIL_TO`. You also need a working mail se
 - **msmtp** (recommended): `brew install msmtp`, then configure `~/.msmtprc`
 - **sendmail**: must already be configured on your system
 
+### SMART health monitoring (optional)
+
+SMART monitoring checks each RAID member disk for predicted drive failure on every poll.
+
+**1. Install smartmontools:**
+
+```sh
+brew install smartmontools
+```
+
+**2. Enable in config:**
+
+```sh
+SMART_ENABLED=true
+```
+
+**What it does:**
+
+- Runs `smartctl -H` on each member disk (e.g. `/dev/disk8` for a member listed as `disk8s2`)
+- If SMART reports `FAILED` → Critical notification: "Drive Failure Predicted"
+- If SMART transitions from `PASSED` to `UNKNOWN` → Warning notification
+- `UNSUPPORTED` (common on some USB enclosures) → logged silently, no alert
+- SMART health is persisted in the state file so alerts only fire on transitions, not on every poll
+
+**Note on USB enclosures:** Not all USB bridges expose SMART data. If your enclosure does not support passthrough, all members will show `UNSUPPORTED` and no alerts will fire. Check with `smartctl -H /dev/diskN` before enabling.
+
 ### Updating the notification icon
 
 To add or replace the icon after installation, drop a new `AppIcon.png` into the project directory and re-run `./install.sh`.
@@ -170,6 +197,8 @@ The monitor detects and alerts on these state changes:
 | Any → Failed | Critical | Yes |
 | Any → Disappeared | Critical | Yes (after transient re-check) |
 | Degraded/Failed → Online | Info | Only if `NOTIFY_ON_ONLINE=true` |
+| SMART PASSED → FAILED | Critical | Only if `SMART_ENABLED=true` |
+| SMART PASSED → UNKNOWN | Warning | Only if `SMART_ENABLED=true` |
 | No change | — | No |
 
 **Critical** alerts use macOS Time Sensitive interruption level — they break through Focus/Do Not Disturb modes.
@@ -212,7 +241,7 @@ LaunchAgent stdout and stderr are captured separately:
             MacOS/
                 raid-monitor-notify          Compiled Swift binary
             Resources/
-                AppIcon.icns                 Notification icon (present if AppIcon.icns was provided)
+                AppIcon.icns                 Notification icon (present if AppIcon.png was provided)
 
 ~/.config/raid-monitor/
     config.sh                                Your configuration
@@ -238,17 +267,33 @@ LaunchAgent stdout and stderr are captured separately:
 ~/bin/raid-monitor.sh
 ```
 
+**Check current status** — shows live RAID and SMART data, no notification sent:
+
+```sh
+~/bin/raid-monitor.sh --status
+```
+
+Output example:
+```
+RAID Monitor v1.0.1 — current status
+
+  Arrays found: 1
+
+  Array:    G-Raid
+  UUID:     F71DAB1B-A18D-434D-B275-9A82BB3D1483
+  Status:   Online
+  Members:
+    #0  disk8s2         Online                        SMART: PASSED
+    #1  disk9s2         Online                        SMART: PASSED
+```
+
 **Verify the installation** and trigger the notification permission prompt:
 
 ```sh
 ~/bin/raid-monitor.sh --test
 ```
 
-**Check current RAID status** directly:
-
-```sh
-diskutil appleRAID list
-```
+`--test` runs all pre-flight checks, shows the current array status (same as `--status`), then sends a test notification to confirm the full pipeline works. Use `--status` for routine checks.
 
 **Stop monitoring temporarily:**
 

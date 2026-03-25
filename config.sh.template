@@ -22,6 +22,7 @@
 # How often the monitor runs, in seconds.
 # Must match StartInterval in the LaunchAgent plist.
 # Valid range: 60–3600. Default: 300 (5 minutes).
+
 POLL_INTERVAL_SECONDS=300
 
 # ---------------------------------------------------------------------------
@@ -31,7 +32,8 @@ POLL_INTERVAL_SECONDS=300
 # Send a notification when the array returns to Online status (e.g. after a
 # rebuild completes). Useful for confirmation; can be noisy for flaky hardware.
 # Default: false.
-NOTIFY_ON_ONLINE=false
+
+NOTIFY_ON_ONLINE=true
 
 # ---------------------------------------------------------------------------
 # Email (optional)
@@ -42,9 +44,11 @@ NOTIFY_ON_ONLINE=false
 EMAIL_ENABLED=false
 
 # Recipient email address. Required if EMAIL_ENABLED=true.
+
 EMAIL_TO=""
 
 # Sender address used in the From: header. Optional — leave empty to omit.
+
 EMAIL_FROM=""
 
 # ---------------------------------------------------------------------------
@@ -54,6 +58,7 @@ EMAIL_FROM=""
 # Maximum log size in megabytes before the current log is archived to
 # raid-monitor.log.1 and a new log is started. One archive is kept.
 # Default: 5.
+
 LOG_MAX_SIZE_MB=5
 
 # ---------------------------------------------------------------------------
@@ -69,7 +74,20 @@ LOG_MAX_SIZE_MB=5
 #
 # Example:
 #   ARRAY_UUID_FILTER="F71DAB1B-A18D-434D-B275-9A82BB3D1483"
+
 ARRAY_UUID_FILTER=""
+
+# ---------------------------------------------------------------------------
+# SMART health monitoring (optional)
+# ---------------------------------------------------------------------------
+
+# Set to true to enable per-member SMART health checks on every poll.
+# Requires smartmontools:  brew install smartmontools
+# When enabled, 'smartctl -H' is run on each RAID member disk. A FAILED result
+# triggers a Critical notification; a transition from PASSED to UNKNOWN triggers
+# a Warning. UNSUPPORTED (e.g. some USB enclosures) is logged and ignored.
+
+SMART_ENABLED=false
 
 # ---------------------------------------------------------------------------
 # USB / wake-from-sleep transient handling
@@ -81,5 +99,6 @@ ARRAY_UUID_FILTER=""
 # delays after the Mac wakes from sleep.
 #
 # Set to 0 to disable the re-check and alert immediately.
-# Default: 30.
-TRANSIENT_RECHECK_SECONDS=30
+# Default: 60.
+
+TRANSIENT_RECHECK_SECONDS=60

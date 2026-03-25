@@ -110,14 +110,6 @@ center.requestAuthorization(options: [.alert, .sound]) { granted, authError in
         return
     }
 
-    // Attach the bundled icon image so it appears as a thumbnail in the
-    // notification banner. This is more reliable than the app-icon corner
-    // rendering, which can show a white square for ad-hoc signed bundles.
-    if let iconURL = Bundle.main.url(forResource: "notification-icon", withExtension: "png"),
-       let attachment = try? UNNotificationAttachment(identifier: "icon", url: iconURL, options: nil) {
-        content.attachments = [attachment]
-    }
-
     let identifier = "com.airic-lenz.raid-monitor.\(Int(Date().timeIntervalSince1970))"
     let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
 
