@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist for the raid-monitor-notify notification helper app bundle.
+  install.sh places this at:
+    ~/bin/raid-monitor-notify.app/Contents/Info.plist
+
+  The app bundle structure is required for UNUserNotificationCenter to function
+  in a compiled binary — the framework reads CFBundleIdentifier from this file
+  at startup to register the notification sender identity.
+
+  The notification permission dialog will read CFBundleDisplayName and show:
+    "RAID Monitor" would like to send notifications
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.user.raid-monitor</string>
+
+    <key>CFBundleName</key>
+    <string>RAID Monitor</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>RAID Monitor</string>
+
+    <key>CFBundleExecutable</key>
+    <string>raid-monitor-notify</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <!-- Icon shown in notifications and System Settings → Notifications.
+         Points to Contents/Resources/AppIcon.icns (no extension in value). -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <!-- Prevents any Dock icon or App Switcher entry when the binary runs -->
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>
