@@ -15,6 +15,7 @@
 //   codesign --sign - --identifier "com.airic-lenz.raid-monitor" raid-monitor-notify
 
 import Foundation
+import AppKit
 import UserNotifications
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,19 @@ if title.isEmpty || body.isEmpty {
 }
 
 // ---------------------------------------------------------------------------
+// NSApplication setup
+//
+// macOS 15+ requires a running NSApplication event loop for
+// UNUserNotificationCenter to present banners on screen. Without it, the
+// notification is accepted by usernoted (appears in Notification Centre list)
+// but no desktop banner is shown. LSUIElement=true in Info.plist suppresses
+// the Dock icon; .accessory policy here suppresses the App Switcher entry.
+// ---------------------------------------------------------------------------
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+
+// ---------------------------------------------------------------------------
 // Build notification content
 // ---------------------------------------------------------------------------
 
@@ -90,23 +104,29 @@ if #available(macOS 12.0, *) {
 // Request authorisation and post
 // ---------------------------------------------------------------------------
 
-let semaphore = DispatchSemaphore(value: 0)
 var exitCode: Int32 = 0
 
 let center = UNUserNotificationCenter.current()
+
+// Timeout: terminate the app after 10 seconds regardless of callback status.
+DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+    fputs("raid-monitor-notify: timed out waiting for notification delivery\n", stderr)
+    exitCode = 3
+    NSApplication.shared.terminate(nil)
+}
 
 center.requestAuthorization(options: [.alert, .sound]) { granted, authError in
     if let authError = authError {
         fputs("raid-monitor-notify: authorisation error: \(authError.localizedDescription)\n", stderr)
         exitCode = 1
-        semaphore.signal()
+        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
         return
     }
     guard granted else {
         fputs("raid-monitor-notify: permission denied.\n", stderr)
-        fputs("  Open System Settings → Notifications → raid-monitor-notify → Allow Notifications\n", stderr)
+        fputs("  Open System Settings → Notifications → RAID Monitor → Allow Notifications\n", stderr)
         exitCode = 1
-        semaphore.signal()
+        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
         return
     }
 
@@ -118,20 +138,10 @@ center.requestAuthorization(options: [.alert, .sound]) { granted, authError in
             fputs("raid-monitor-notify: error posting notification: \(postError.localizedDescription)\n", stderr)
             exitCode = 2
         }
-        semaphore.signal()
+        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
     }
 }
 
-// Block until the callback fires, pumping the run loop so framework callbacks
-// can execute. A 10-second timeout guards against unexpected hangs.
-let deadline = Date(timeIntervalSinceNow: 10.0)
-while semaphore.wait(timeout: .now()) == .timedOut {
-    if Date() >= deadline {
-        fputs("raid-monitor-notify: timed out waiting for notification delivery\n", stderr)
-        exitCode = 3
-        break
-    }
-    RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
-}
-
+// Run the proper AppKit event loop. The terminate() calls above will stop it.
+app.run()
 exit(exitCode)

@@ -244,7 +244,9 @@ _write_state() {
                 printf 'array_%d_member_%d_dev=%s\n'    $i $m "${CURRENT[array_${i}_member_${m}_dev]:-}"
                 printf 'array_%d_member_%d_status=%s\n' $i $m "${CURRENT[array_${i}_member_${m}_status]:-}"
                 local smart="${CURRENT[array_${i}_member_${m}_smart]:-}"
-                [[ -n "$smart" ]] && printf 'array_%d_member_%d_smart=%s\n' $i $m "$smart"
+                if [[ -n "$smart" ]]; then
+                    printf 'array_%d_member_%d_smart=%s\n' $i $m "$smart"
+                fi
             done
         done
     } > "$STATE_TMP" || {
@@ -313,12 +315,12 @@ _send_email() {
 
 # Issue a notification + optional email for a state change
 _alert() {
-    local name="$1" uuid="$2" status="$3" level="$4" body_text="$5" prev_status="$6"
+    local name="$1" uuid="$2" array_status="$3" level="$4" body_text="$5" prev_status="$6"
     local ts
     ts=$(date '+%Y-%m-%d %H:%M')
 
     # Notification body includes timestamp
-    _notify "RAID Alert — ${name}" "Status: ${status}" "${body_text}  [${ts}]" "$level" || true
+    _notify "RAID Alert — ${name}" "Status: ${array_status}" "${body_text}  [${ts}]" "$level" || true
 
     # Email includes fuller context
     if [[ "${EMAIL_ENABLED:-false}" == "true" ]]; then
@@ -337,9 +339,9 @@ _alert() {
         local email_body
         printf -v email_body \
             'Array:    %s\nUUID:     %s\nStatus:   %s\n\nMembers:\n%s\nPrevious status: %s\n\nAction required: Run: diskutil appleRAID list' \
-            "$name" "$uuid" "$status" "$member_lines" "$prev_status"
+            "$name" "$uuid" "$array_status" "$member_lines" "$prev_status"
 
-        _send_email "[RAID Monitor] ${name} — Status: ${status}" "$email_body" || true
+        _send_email "[RAID Monitor] ${name} — Status: ${array_status}" "$email_body" || true
     fi
 }
 
@@ -602,7 +604,7 @@ _handle_status_change() {
                 _log INFO "Array '${name}' returned to Online — NOTIFY_ON_ONLINE=false, suppressing alert"
                 return 0
             fi
-            level="info"
+            level="warning"
             body="Array is back Online. ${member_summary}"
             ;;
         Degraded)
@@ -811,8 +813,11 @@ _test_mode() {
     fi
 
     printf '\nTest complete. Check that the notification appeared on screen.\n'
-    printf 'If it did not, open System Settings → Notifications → raid-monitor-notify\n'
-    printf 'and ensure "Allow Notifications" is enabled.\n'
+    printf '\nIf it did not appear (or only goes silently into the list):\n'
+    printf '  System Settings → Notifications → RAID Monitor\n'
+    printf '    Alert style              →  Alerts   (not Banners or None)\n'
+    printf '    Show in Notification Centre  →  On\n'
+    printf '    Show on Lock Screen          →  On   (required when Mac is locked)\n'
     _log INFO "[TEST] Test complete"
     exit 0
 }
