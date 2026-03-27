@@ -126,14 +126,27 @@ func run() async throws -> Int32 {
 
     // In-place progress display for interactive terminals
     let isTerminal = isatty(STDERR_FILENO) != 0
+    nonisolated(unsafe) var progressActive = false
     let progressHandler: FileScanner.ProgressHandler = { message in
         if isTerminal {
-            let padded = message.padding(toLength: max(message.count, 80), withPad: " ", startingAt: 0)
-            fputs("\r\(padded)", stderr)
+            if message.isEmpty {
+                // Empty message = end of progress block; clear line only if progress was shown
+                if progressActive {
+                    fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\n", stderr)
+                    progressActive = false
+                }
+            } else {
+                progressActive = true
+                let padded = message.padding(toLength: max(message.count, 80), withPad: " ", startingAt: 0)
+                fputs("\r\(padded)", stderr)
+            }
         }
     }
     let clearProgress = {
-        if isTerminal { fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\n", stderr) }
+        if isTerminal && progressActive {
+            fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\n", stderr)
+            progressActive = false
+        }
     }
 
     // Mode dispatch

@@ -324,6 +324,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 8: Ensure ~/bin is in PATH
+# ---------------------------------------------------------------------------
+step "Checking PATH"
+
+if [[ ":$PATH:" == *":${INSTALL_BIN}:"* ]]; then
+    ok "$(short "$INSTALL_BIN") is already in PATH"
+else
+    # Determine the user's shell profile
+    SHELL_NAME=$(basename "$SHELL")
+    case "$SHELL_NAME" in
+        zsh)  PROFILE="${HOME}/.zshrc" ;;
+        bash) PROFILE="${HOME}/.bash_profile" ;;
+        *)    PROFILE="${HOME}/.profile" ;;
+    esac
+
+    PATH_LINE='export PATH="$HOME/bin:$PATH"'
+
+    if [[ -f "$PROFILE" ]] && grep -qF 'HOME/bin' "$PROFILE" 2>/dev/null; then
+        ok "$(short "$INSTALL_BIN") already referenced in $(short "$PROFILE") (but not active in this session)"
+        info "Run: source $(short "$PROFILE")  or open a new terminal"
+    else
+        printf '\n# Added by RAID Integrity Monitor installer\n%s\n' "$PATH_LINE" >> "$PROFILE"
+        ok "Added $(short "$INSTALL_BIN") to PATH in $(short "$PROFILE")"
+        info "Run: source $(short "$PROFILE")  or open a new terminal to use 'raid-integrity-monitor' directly"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 printf '\n'
@@ -336,10 +364,10 @@ printf '     System Settings → Privacy & Security → Full Disk Access\n'
 printf '     Add: %s\n' "${DEST_BINARY/#$HOME/\~}"
 printf '\n'
 printf '  2. Build the baseline manifest (first run only):\n'
-printf '     %s --mode init\n' "${DEST_BINARY/#$HOME/\~}"
+printf '     raid-integrity-monitor --mode init\n'
 printf '\n'
 printf '  3. Verify the setup:\n'
-printf '     %s --mode test\n' "${DEST_BINARY/#$HOME/\~}"
+printf '     raid-integrity-monitor --mode test\n'
 printf '\n'
 printf '  4. On first test run, macOS will show a one-time system prompt:\n'
 printf '     "RAID Integrity Monitor" would like to send notifications\n'
@@ -359,7 +387,7 @@ try:
 except: print(24)
 " 2>/dev/null || echo 24)"
 printf '  To run a full scan immediately:\n'
-printf '     %s --mode scan\n' "${DEST_BINARY/#$HOME/\~}"
+printf '     raid-integrity-monitor --mode scan\n'
 printf '\n'
 printf '  To uninstall: %s/install.sh --uninstall\n' "${SCRIPT_DIR/#$HOME/\~}"
 printf '\n'

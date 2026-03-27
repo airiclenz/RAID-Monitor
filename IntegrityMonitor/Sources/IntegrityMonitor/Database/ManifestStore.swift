@@ -40,10 +40,14 @@ public protocol ManifestStore: AnyObject {
     /// ordered ascending by `last_verified` (oldest first).
     func filesToVerify(before date: Date, limit: Int) throws -> [FileRecord]
 
-    // MARK: Replica sync
-    /// All file records in the manifest. Used for replica sync.
-    func allRecords() throws -> [FileRecord]
+    // MARK: Streaming iteration
+    /// Iterate all file records in batches. Used for replica sync.
+    func forEachRecordBatch(batchSize: Int, _ body: ([FileRecord]) throws -> Void) throws
 
+    /// Iterate all file paths in batches. Used for Phase 4 missing-file detection.
+    func forEachPathBatch(batchSize: Int, _ body: ([String]) throws -> Void) throws
+
+    // MARK: Replica sync
     /// Sync all file records from primary to replica. No-op for non-mirrored stores.
     func syncReplica() throws
 }

@@ -137,16 +137,19 @@ public actor FileScanner {
         // Phase 1: directory walk + triage
         logger.info("Phase 1: Directory walk and triage")
         let (toHash, pathsSeen) = try runPhase1(result: &result)
+        onProgress?("")  // end progress block
 
         // Phase 2: hash new/modified files
         logger.info("Phase 2: Hashing \(toHash.count) new/modified file(s)")
         try await runPhase2(toHash: toHash, mode: mode, result: &result)
+        onProgress?("")  // end progress block
 
         // Phase 3: rolling re-verification
         let verificationCutoff = Date().addingTimeInterval(-Double(config.verificationIntervalDays) * 86400)
         let toVerify = try store.filesToVerify(before: verificationCutoff, limit: config.performance.maxVerificationsPerRun)
         logger.info("Phase 3: Re-verifying \(toVerify.count) file(s)")
         try await runPhase3(toVerify: toVerify, result: &result)
+        onProgress?("")  // end progress block
 
         // Phase 4: missing file reconciliation
         logger.info("Phase 4: Missing file reconciliation")
@@ -450,23 +453,23 @@ public actor FileScanner {
     // MARK: - Phase 4: Missing file reconciliation
 
     private func runPhase4(pathsSeen: Set<String>, result: inout ScanResult) throws {
-        let allKnown = try store.allPaths()
-        let missing = allKnown.subtracting(pathsSeen)
+        try store.forEachPathBatch(batchSize: 5000) { batch in
+            for path in batch {
+                guard !pathsSeen.contains(path) else { continue }
+                // Only mark as missing if we don't already know it's missing or corrupted
+                if let existing = try store.record(for: path),
+                   existing.status != .missing {
+                    try store.markMissing(path: path)
+                    try store.logEvent(ScanEvent(eventType: ScanEvent.fileMissing, path: path))
+                    result.filesMissing += 1
 
-        for path in missing {
-            // Only mark as missing if we don't already know it's missing or corrupted
-            if let existing = try store.record(for: path),
-               existing.status != .missing {
-                try store.markMissing(path: path)
-                try store.logEvent(ScanEvent(eventType: ScanEvent.fileMissing, path: path))
-                result.filesMissing += 1
-
-                alertManager.sendIfEnabled(missingFile: Alert(
-                    title: "File Missing",
-                    subtitle: (path as NSString).lastPathComponent,
-                    body: "A previously tracked file is no longer present:\n\(path)",
-                    severity: .warning
-                ))
+                    alertManager.sendIfEnabled(missingFile: Alert(
+                        title: "File Missing",
+                        subtitle: (path as NSString).lastPathComponent,
+                        body: "A previously tracked file is no longer present:\n\(path)",
+                        severity: .warning
+                    ))
+                }
             }
         }
     }

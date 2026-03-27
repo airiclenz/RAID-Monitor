@@ -142,20 +142,48 @@ public final class SQLiteManifestStore: ManifestStore {
         return paths
     }
 
-    public func allRecords() throws -> [FileRecord] {
+    public func forEachRecordBatch(batchSize: Int, _ body: ([FileRecord]) throws -> Void) throws {
         guard let stmt = stmtAllRecords else { throw AppError.database("Database not open") }
         defer { sqlite3_reset(stmt) }
 
-        var results: [FileRecord] = []
+        var batch: [FileRecord] = []
+        batch.reserveCapacity(batchSize)
         while true {
             let rc = sqlite3_step(stmt)
             if rc == SQLITE_DONE { break }
             guard rc == SQLITE_ROW else {
                 throw AppError.database("SELECT all records failed: \(dbError())")
             }
-            results.append(extractFileRecord(from: stmt))
+            batch.append(extractFileRecord(from: stmt))
+            if batch.count >= batchSize {
+                try body(batch)
+                batch.removeAll(keepingCapacity: true)
+            }
         }
-        return results
+        if !batch.isEmpty { try body(batch) }
+    }
+
+    public func forEachPathBatch(batchSize: Int, _ body: ([String]) throws -> Void) throws {
+        guard let stmt = stmtAllPaths else { throw AppError.database("Database not open") }
+        defer { sqlite3_reset(stmt) }
+
+        var batch: [String] = []
+        batch.reserveCapacity(batchSize)
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            guard rc == SQLITE_ROW else {
+                throw AppError.database("SELECT all paths failed: \(dbError())")
+            }
+            if let cStr = sqlite3_column_text(stmt, 0) {
+                batch.append(String(cString: cStr))
+            }
+            if batch.count >= batchSize {
+                try body(batch)
+                batch.removeAll(keepingCapacity: true)
+            }
+        }
+        if !batch.isEmpty { try body(batch) }
     }
 
     public func markMissing(path: String) throws {
@@ -285,6 +313,7 @@ public final class SQLiteManifestStore: ManifestStore {
         CREATE INDEX IF NOT EXISTS idx_files_last_verified  ON files(last_verified);
         CREATE INDEX IF NOT EXISTS idx_files_hash_algorithm ON files(hash_algorithm);
         CREATE INDEX IF NOT EXISTS idx_files_status         ON files(status);
+        CREATE INDEX IF NOT EXISTS idx_files_verify_rolling ON files(status, last_verified);
 
         CREATE TABLE IF NOT EXISTS events (
             id          INTEGER PRIMARY KEY,

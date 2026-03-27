@@ -96,22 +96,27 @@ public final class MirroredManifestStore: ManifestStore {
         try primary.filesToVerify(before: date, limit: limit)
     }
 
-    // MARK: - Replica sync
+    // MARK: - Streaming iteration (primary only)
 
-    public func allRecords() throws -> [FileRecord] {
-        try primary.allRecords()
+    public func forEachRecordBatch(batchSize: Int, _ body: ([FileRecord]) throws -> Void) throws {
+        try primary.forEachRecordBatch(batchSize: batchSize, body)
     }
+
+    public func forEachPathBatch(batchSize: Int, _ body: ([String]) throws -> Void) throws {
+        try primary.forEachPathBatch(batchSize: batchSize, body)
+    }
+
+    // MARK: - Replica sync
 
     public func syncReplica() throws {
         guard let r = replica else { return }
         do {
-            let allRecords = try primary.allRecords()
-            let batchSize = 500
-            for start in stride(from: 0, to: allRecords.count, by: batchSize) {
-                let end = min(start + batchSize, allRecords.count)
-                try r.upsertBatch(Array(allRecords[start..<end]))
+            var count = 0
+            try primary.forEachRecordBatch(batchSize: 500) { batch in
+                try r.upsertBatch(batch)
+                count += batch.count
             }
-            logger.info("Replica sync: \(allRecords.count) record(s) synced")
+            logger.info("Replica sync: \(count) record(s) synced")
         } catch {
             logger.warn("Replica sync failed (continuing): \(error)")
         }
