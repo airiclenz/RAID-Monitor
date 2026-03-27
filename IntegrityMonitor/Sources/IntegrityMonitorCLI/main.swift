@@ -73,7 +73,6 @@ func printUsage() {
       verify-db       Cross-check primary vs replica database counts
       report          Print last scan summary
       test            Send test notification and verify setup
-      init            Build baseline manifest (suppresses new-file alerts)
 
     Options:
       --config <path>   Path to config.json
@@ -104,7 +103,7 @@ func run() async throws -> Int32 {
         config = try ConfigLoader.load(from: configURL)
     } catch AppError.configNotFound(let url) {
         fputs("Config file not found: \(url.path)\n", stderr)
-        fputs("Run 'raid-integrity-monitor --mode init' after creating a config file.\n", stderr)
+        fputs("Run 'raid-integrity-monitor --mode scan' after creating a config file.\n", stderr)
         fputs("See ~/.config/raid-integrity-monitor/config.json.example for a template.\n", stderr)
         return 1
     }
@@ -202,8 +201,9 @@ func run() async throws -> Int32 {
             raidScanner: raidScanner, logger: logger,
             onProgress: progressHandler
         )
-        _ = try await scanner.scan(mode: .full)
+        let result = try await scanner.scan(mode: .full)
         clearProgress()
+        print("Scan complete. \(result.filesWalked) file(s) checked, \(result.filesNew) new, \(result.filesModified) modified, \(result.filesCorrupted) corrupted, \(result.filesMissing) missing.")
 
     case "scan-files":
         try store.open()
@@ -233,22 +233,6 @@ func run() async throws -> Int32 {
             alertManager.sendIfEnabled(raidAlert: alert)
         }
 
-    case "init":
-        try store.open()
-        defer { store.close() }
-        let hasher = try HasherFactory.make(for: config.hashAlgorithm)
-        let exclusions = ExclusionRules(config: config.exclude)
-        let raidScanner = RAIDScanner(config: config.raid, logger: logger)
-        let scanner = FileScanner(
-            config: config, store: store, hasher: hasher,
-            exclusions: exclusions, alertManager: alertManager,
-            raidScanner: raidScanner, logger: logger,
-            onProgress: progressHandler
-        )
-        let result = try await scanner.scan(mode: .baseline)
-        clearProgress()
-        print("Baseline complete. \(result.filesNew + result.filesWalked) file(s) indexed. Run --mode scan on future runs.")
-
     case "upgrade-hash":
         guard let fromAlg = fromAlg, let toAlg = toAlg else {
             fputs("upgrade-hash requires --from <algorithm> and --to <algorithm>\n", stderr)
@@ -269,7 +253,7 @@ func run() async throws -> Int32 {
         if let last = try store.lastScan() {
             printScanReport(last)
         } else {
-            print("No scans recorded yet. Run --mode scan or --mode init first.")
+            print("No scans recorded yet. Run --mode scan first.")
         }
 
     case "test":

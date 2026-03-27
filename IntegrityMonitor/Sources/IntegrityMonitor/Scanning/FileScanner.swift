@@ -22,12 +22,10 @@ import Foundation
 public actor FileScanner {
 
     public enum ScanMode {
-        /// Full scan: Phase 0 + 1 + 2 + 3 + 4
+        /// Full scan: Phase 0 (RAID) + Phases 1–4 (file integrity)
         case full
-        /// File integrity only: Phase 1 + 2 + 3 + 4 (no RAID)
+        /// File integrity only: Phases 1–4 (no RAID check)
         case filesOnly
-        /// Build baseline: same as full but new-file alerts are suppressed
-        case baseline
     }
 
     /// Called with a progress string to display (e.g. "Phase 1: 1234 files walked").
@@ -79,7 +77,7 @@ public actor FileScanner {
             }
 
             // Phases 1–4: file integrity
-            result = try await runFilePhases(mode: mode, result: result)
+            result = try await runFilePhases(result: result)
             result.status = .completed
 
         } catch {
@@ -127,7 +125,7 @@ public actor FileScanner {
 
     // MARK: - Phases 1–4: File integrity
 
-    private func runFilePhases(mode: ScanMode, result: ScanResult) async throws -> ScanResult {
+    private func runFilePhases(result: ScanResult) async throws -> ScanResult {
         var result = result
 
         // Pre-scan: sync primary → replica (no-op if no replica configured)
@@ -141,7 +139,7 @@ public actor FileScanner {
 
         // Phase 2: hash new/modified files
         logger.info("Phase 2: Hashing \(toHash.count) new/modified file(s)")
-        try await runPhase2(toHash: toHash, mode: mode, result: &result)
+        try await runPhase2(toHash: toHash, result: &result)
         onProgress?("")  // end progress block
 
         // Phase 3: rolling re-verification
@@ -240,7 +238,7 @@ public actor FileScanner {
 
     // MARK: - Phase 2: Hash new/modified
 
-    private func runPhase2(toHash: [(URL, FileRecord?)], mode: ScanMode, result: inout ScanResult) async throws {
+    private func runPhase2(toHash: [(URL, FileRecord?)], result: inout ScanResult) async throws {
         guard !toHash.isEmpty else { return }
 
         let maxThreads = config.performance.maxHashThreads

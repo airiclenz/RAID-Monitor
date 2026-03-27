@@ -4,7 +4,6 @@
 
 ```
 RAID Monitor/
-├── v1/                          Shell-script RAID monitor (production, preserved)
 ├── IntegrityMonitor/            Swift SPM project (v2 — active development)
 │   ├── Package.swift
 │   ├── Sources/
@@ -15,8 +14,6 @@ RAID Monitor/
 ├── technical-design-specification-v2.md
 └── CLAUDE.md
 ```
-
-The v1 directory is frozen — do not modify it.
 
 ## Build and test
 
@@ -111,3 +108,22 @@ The `SQLiteManifestStoreTests` use a real on-disk SQLite database in the temp di
 `install.sh` uses `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` when Xcode is present (required for framework linking). The built binaries are `raid-integrity-monitor` and `NotifyHelper` (the SPM target name) — `install.sh` copies `NotifyHelper` to the app bundle as `raid-integrity-monitor-notify`.
 
 Config merging on reinstall is done by an inline Python 3 script (present on all macOS versions). It adds top-level keys only — no deep merge. This is intentional: new nested keys must be added as top-level fields or documented as manual additions.
+
+
+## Code Style
+
+### Formatting
+- Tab indentation
+- Precede every function with an 80-character divider: `// ============================================================================`
+- Property separators: `// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::`
+- Always use `{ }` for control blocks (`if`, `foreach`, etc.), even one-liners
+- Place every function parameters in a new line indented regaqrding to the function name
+
+### Naming
+- Variables: descriptive and full words (e.g., `retrievedAccount` not `acc`)
+- Methods: camelCase, verb-noun phrases (e.g., `calculateTotalAmount`)
+
+### Quality
+- Single responsibility: keep methods small — one method = one logical action
+- Early exit: use guard clauses to flatten `if` nesting
+- Code needs to be well structured, formatted and human-readable.
