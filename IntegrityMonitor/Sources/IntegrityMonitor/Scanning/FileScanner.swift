@@ -316,7 +316,7 @@ public actor FileScanner {
 					truncateFilename(($0.path as NSString).lastPathComponent)
 				} ?? ""
 				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
-				onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(nameSegment)\(eta)")
+				onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(eta)\(nameSegment)")
 
 				if let fileRecord = record {
 					// Track new/modified for reporting before persisting as .ok
@@ -471,7 +471,7 @@ public actor FileScanner {
 					truncateFilename(($0.path as NSString).lastPathComponent)
 				} ?? ""
 				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
-				onProgress?("Phase 3: Verifying \(completed)/\(total) (\(pct)%)\(nameSegment)\(eta)")
+				onProgress?("Phase 3: Verifying \(completed)/\(total) (\(pct)%)\(eta)\(nameSegment)")
 
 				if let verifiedResult = verifiedRecord {
 					pendingRecords.append(verifiedResult)
@@ -632,10 +632,15 @@ public actor FileScanner {
 
 		let fileName = truncateFilename(url.lastPathComponent)
 		let overallPct = total > 0 ? (completed * 100) / total : 0
+		let eta = formatETA(
+			started: phaseStart,
+			completed: completed,
+			total: total
+		)
 
 		return { bytesHashed, totalSize in
 			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
-			onProg("\(phaseLabel) \(completed)/\(total) (\(overallPct)%) — \(fileName) (\(filePct)%)")
+			onProg("\(phaseLabel) \(completed)/\(total) (\(overallPct)%)\(eta) — \(fileName) (\(filePct)%)")
 		}
 	}
 
