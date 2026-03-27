@@ -11,7 +11,6 @@ RAID Monitor/
 │   │   └── IntegrityMonitorCLI/ Executable target — main.swift only
 │   ├── NotifyHelper/            Notification helper executable target
 │   └── Tests/IntegrityMonitorTests/
-├── technical-design-specification-v2.md
 └── CLAUDE.md
 ```
 
@@ -40,9 +39,6 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 
 ### No external dependencies
 The only non-Apple imports are `sqlite3` (system-bundled) and `CryptoKit` (Apple SDK). Do not add SwiftPM package dependencies. The zero-dependency requirement is intentional and must be preserved.
-
-### ScanMode.baseline, not .init
-The file scanner's baseline mode is named `.baseline` (not `.init`). `init` is a Swift keyword — using it as an enum case compiles with backticks but causes confusing call sites. The `--mode init` CLI argument maps to `.baseline` internally.
 
 ### Config uses decodeIfPresent everywhere
 All `Config` sub-structs implement `init(from decoder:)` with `decodeIfPresent` and hardcoded fallbacks. This lets users write partial config files (e.g. only `watchPaths` and `database`). Do not switch back to synthesised Codable decoding — it requires all keys to be present in the JSON.
@@ -84,7 +80,7 @@ The LaunchAgent uses `StartInterval` (default every 5 minutes, controlled by `sc
 
 Three tables: `files` (one row per tracked file), `events` (append-only audit log), `scans` (run metadata). Schema is created in `SQLiteManifestStore.createSchema()`. The schema version is recorded in a `schema_version` table — increment it and add migration logic in `open()` if you change the schema.
 
-Key indexes: `idx_files_last_verified` (Phase 3 rolling query), `idx_files_hash_algorithm` (upgrade query), `idx_files_status`.
+Key indexes: `idx_files_last_verified` (Phase 3 rolling query), `idx_files_hash_algorithm` (upgrade query), `idx_files_status`, `idx_files_verify_rolling` (composite index on `(status, last_verified)` for efficient Phase 3 queries).
 
 ## Testing
 
@@ -117,7 +113,7 @@ Config merging on reinstall is done by an inline Python 3 script (present on all
 - Precede every function with an 80-character divider: `// ============================================================================`
 - Property separators: `// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::`
 - Always use `{ }` for control blocks (`if`, `foreach`, etc.), even one-liners
-- Place every function parameters in a new line indented regaqrding to the function name
+- Place every function parameter on a new line indented regarding the function name
 
 ### Naming
 - Variables: descriptive and full words (e.g., `retrievedAccount` not `acc`)
