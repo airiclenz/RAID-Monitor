@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for RAID Integrity Monitor.
+  install.sh copies this to ~/Library/LaunchAgents/com.airic-lenz.raid-integrity-monitor.plist
+  with INSTALL_PATH, USERNAME, and RAID_CHECK_INTERVAL replaced.
+
+  Schedule: runs every RAID_CHECK_INTERVAL seconds (default 300 = 5 min).
+  Each invocation always checks RAID health. File integrity scans run
+  automatically when schedule.fileScanIntervalHours has elapsed since the
+  last completed scan.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.airic-lenz.raid-integrity-monitor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>INSTALL_PATH/raid-integrity-monitor</string>
+        <string>--mode</string>
+        <string>scheduled</string>
+    </array>
+
+    <!-- Run every RAID_CHECK_INTERVAL seconds (default 300 = 5 minutes).
+         RAID health is checked on every invocation. File integrity scans
+         run only when fileScanIntervalHours has elapsed since the last scan. -->
+    <key>StartInterval</key>
+    <integer>RAID_CHECK_INTERVAL</integer>
+
+    <!-- Do NOT run immediately on login — baseline must be built first via
+         raid-integrity-monitor --mode init. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- launchd does not inherit environment variables. Both HOME and PATH
+         are required: HOME for ~ expansion in config/database paths, PATH
+         for diskutil (RAID check). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/USERNAME</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Separate stdout and stderr logs for easy troubleshooting. -->
+    <key>StandardOutPath</key>
+    <string>/Users/USERNAME/.local/share/raid-integrity-monitor/launchd.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/USERNAME/.local/share/raid-integrity-monitor/launchd.stderr.log</string>
+</dict>
+</plist>

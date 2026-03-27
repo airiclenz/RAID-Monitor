@@ -1,0 +1,64 @@
+{
+	"configurations": [
+		{
+			"type": "swift",
+			"request": "launch",
+			"args": [],
+			"cwd": "${workspaceFolder:RAID Monitor}/IntegrityMonitor",
+			"name": "Debug integrity-monitor (IntegrityMonitor)",
+			"target": "integrity-monitor",
+			"configuration": "debug",
+			"preLaunchTask": "swift: Build Debug integrity-monitor (IntegrityMonitor)"
+		},
+		{
+			"type": "swift",
+			"request": "launch",
+			"args": [],
+			"cwd": "${workspaceFolder:RAID Monitor}/IntegrityMonitor",
+			"name": "Release integrity-monitor (IntegrityMonitor)",
+			"target": "integrity-monitor",
+			"configuration": "release",
+			"preLaunchTask": "swift: Build Release integrity-monitor (IntegrityMonitor)"
+		},
+		{
+			"type": "swift",
+			"request": "launch",
+			"args": [],
+			"cwd": "${workspaceFolder:RAID Monitor}/IntegrityMonitor",
+			"name": "Debug NotifyHelper (IntegrityMonitor)",
+			"target": "NotifyHelper",
+			"configuration": "debug",
+			"preLaunchTask": "swift: Build Debug NotifyHelper (IntegrityMonitor)"
+		},
+		{
+			"type": "swift",
+			"request": "launch",
+			"args": [],
+			"cwd": "${workspaceFolder:RAID Monitor}/IntegrityMonitor",
+			"name": "Release NotifyHelper (IntegrityMonitor)",
+			"target": "NotifyHelper",
+			"configuration": "release",
+			"preLaunchTask": "swift: Build Release NotifyHelper (IntegrityMonitor)"
+		},
+		{
+			"type": "swift",
+			"request": "launch",
+			"args": [],
+			"cwd": "${workspaceFolder:RAID Monitor}/IntegrityMonitor",
+			"name": "Debug raid-integrity-monitor (IntegrityMonitor)",
+			"target": "raid-integrity-monitor",
+			"configuration": "debug",
+			"preLaunchTask": "swift: Build Debug raid-integrity-monitor (IntegrityMonitor)"
+		},
+		{
+			"type": "swift",
+			"request": "launch",
+			"args": [],
+			"cwd": "${workspaceFolder:RAID Monitor}/IntegrityMonitor",
+			"name": "Release raid-integrity-monitor (IntegrityMonitor)",
+			"target": "raid-integrity-monitor",
+			"configuration": "release",
+			"preLaunchTask": "swift: Build Release raid-integrity-monitor (IntegrityMonitor)"
+		}
+	]
+}

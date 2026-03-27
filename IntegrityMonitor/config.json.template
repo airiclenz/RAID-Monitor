@@ -1,0 +1,63 @@
+{
+  "watchPaths": [
+    "/Volumes/VOLUME_NAME"
+  ],
+
+  "exclude": {
+    "pathPatterns": [
+      ".DS_Store",
+      "*.tmp",
+      "*.part",
+      "Thumbs.db"
+    ],
+    "directoryPatterns": [
+      "*.lrdata",
+      "Lightroom Previews.lrdata",
+      ".Spotlight-V100",
+      ".fseventsd",
+      ".Trashes",
+      ".DocumentRevisions-V100"
+    ],
+    "minSizeBytes": 0,
+    "maxSizeBytes": null
+  },
+
+  "hashAlgorithm": "sha256",
+
+  "verificationIntervalDays": 30,
+
+  "database": {
+    "primary": "~/.local/share/raid-integrity-monitor/manifest.db",
+    "replica": null
+  },
+
+  "notifications": {
+    "onCorruption": true,
+    "onRAIDDegraded": true,
+    "onMissingFile": false,
+    "onScanComplete": false,
+    "onScanCompleteWithIssues": true
+  },
+
+  "performance": {
+    "maxHashThreads": 2,
+    "dbBatchSize": 500,
+    "maxVerificationsPerRun": 1000
+  },
+
+  "logging": {
+    "logPath": "~/.local/share/raid-integrity-monitor/raid-integrity-monitor.log",
+    "level": "info",
+    "maxLogSizeBytes": 10485760
+  },
+
+  "raid": {
+    "enabled": true,
+    "memberDisks": []
+  },
+
+  "schedule": {
+    "raidCheckIntervalMinutes": 5,
+    "fileScanIntervalHours": 24
+  }
+}

@@ -1,3 +1,14 @@
-
-
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# SPM build artifacts
+IntegrityMonitor/.build/
+IntegrityMonitor/.swiftpm/
+
+# Xcode derived data
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+technical-design-specification-v2.md
