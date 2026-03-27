@@ -30,6 +30,10 @@ public actor FileScanner {
         case baseline
     }
 
+    /// Called with a progress string to display (e.g. "Phase 1: 1234 files walked").
+    /// The caller is responsible for in-place terminal updates (\r) if desired.
+    public typealias ProgressHandler = @Sendable (String) -> Void
+
     private let config: Config
     private let store: ManifestStore
     private let hasher: any FileHasher
@@ -37,6 +41,7 @@ public actor FileScanner {
     private let alertManager: AlertManager
     private let raidScanner: RAIDScanner
     private let logger: Logger
+    private let onProgress: ProgressHandler?
 
     public init(
         config: Config,
@@ -45,7 +50,8 @@ public actor FileScanner {
         exclusions: ExclusionRules,
         alertManager: AlertManager,
         raidScanner: RAIDScanner,
-        logger: Logger
+        logger: Logger,
+        onProgress: ProgressHandler? = nil
     ) {
         self.config = config
         self.store = store
@@ -54,6 +60,7 @@ public actor FileScanner {
         self.alertManager = alertManager
         self.raidScanner = raidScanner
         self.logger = logger
+        self.onProgress = onProgress
     }
 
     // MARK: - Public entry point
@@ -196,6 +203,10 @@ public actor FileScanner {
                 result.filesWalked += 1
                 pathsSeen.insert(url.path)
 
+                if result.filesWalked % 500 == 0 {
+                    onProgress?("Phase 1: \(result.filesWalked) files discovered")
+                }
+
                 let mtime = resourceValues?.contentModificationDate ?? Date()
 
                 // Triage: compare against stored record
@@ -216,6 +227,7 @@ public actor FileScanner {
             }
         }
 
+        onProgress?("Phase 1: \(result.filesWalked) files discovered, \(toHash.count) to hash")
         return (toHash, pathsSeen)
     }
 
@@ -226,7 +238,10 @@ public actor FileScanner {
 
         let maxThreads = config.performance.maxHashThreads
         let batchSize = config.performance.dbBatchSize
+        let total = toHash.count
         let now = Date()
+        let phaseStart = Date()
+        var completed = 0
 
         // Worker pool: keep exactly maxThreads tasks in-flight at once.
         // We drain with group.next() and add a new task after each completes.
@@ -246,6 +261,11 @@ public actor FileScanner {
 
             while let record = try await group.next() {
                 inFlight -= 1
+                completed += 1
+
+                let pct = total > 0 ? (completed * 100) / total : 0
+                let eta = formatETA(started: phaseStart, completed: completed, total: total)
+                onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(eta)")
 
                 if let r = record {
                     // Track new/modified for reporting before persisting as .ok
@@ -322,7 +342,10 @@ public actor FileScanner {
 
         let maxThreads = config.performance.maxHashThreads
         let batchSize = config.performance.dbBatchSize
+        let total = toVerify.count
         let now = Date()
+        let phaseStart = Date()
+        var completed = 0
 
         var pendingRecords: [FileRecord] = []
 
@@ -338,6 +361,11 @@ public actor FileScanner {
 
             while let verifiedRecord = try await group.next() {
                 inFlight -= 1
+                completed += 1
+
+                let pct = total > 0 ? (completed * 100) / total : 0
+                let eta = formatETA(started: phaseStart, completed: completed, total: total)
+                onProgress?("Phase 3: Verifying \(completed)/\(total) (\(pct)%)\(eta)")
 
                 if let r = verifiedRecord {
                     pendingRecords.append(r)
@@ -447,5 +475,19 @@ public actor FileScanner {
 
     private func scanSummaryJSON(_ r: ScanResult) -> String {
         "{\"walked\":\(r.filesWalked),\"new\":\(r.filesNew),\"modified\":\(r.filesModified),\"verified\":\(r.filesVerified),\"corrupted\":\(r.filesCorrupted),\"missing\":\(r.filesMissing)}"
+    }
+
+    /// Format estimated remaining time from elapsed seconds and progress.
+    private func formatETA(started: Date, completed: Int, total: Int) -> String {
+        guard completed > 0 else { return "" }
+        let elapsed = Date().timeIntervalSince(started)
+        let secsPerItem = elapsed / Double(completed)
+        let remaining = Int(secsPerItem * Double(total - completed))
+        if remaining < 60 { return " — \(remaining)s remaining" }
+        let mins = remaining / 60
+        let secs = remaining % 60
+        if mins < 60 { return " — \(mins)m \(secs)s remaining" }
+        let hours = mins / 60
+        return " — \(hours)h \(mins % 60)m remaining"
     }
 }

@@ -124,6 +124,18 @@ func run() async throws -> Int32 {
     let notifyChannel = MacOSAlertChannel(notifyBinaryPath: notifyBin, logger: logger)
     let alertManager = AlertManager(channels: [notifyChannel], config: config.notifications, logger: logger)
 
+    // In-place progress display for interactive terminals
+    let isTerminal = isatty(STDERR_FILENO) != 0
+    let progressHandler: FileScanner.ProgressHandler = { message in
+        if isTerminal {
+            let padded = message.padding(toLength: max(message.count, 80), withPad: " ", startingAt: 0)
+            fputs("\r\(padded)", stderr)
+        }
+    }
+    let clearProgress = {
+        if isTerminal { fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\r", stderr) }
+    }
+
     // Mode dispatch
     switch mode {
 
@@ -174,9 +186,11 @@ func run() async throws -> Int32 {
         let scanner = FileScanner(
             config: config, store: store, hasher: hasher,
             exclusions: exclusions, alertManager: alertManager,
-            raidScanner: raidScanner, logger: logger
+            raidScanner: raidScanner, logger: logger,
+            onProgress: progressHandler
         )
         _ = try await scanner.scan(mode: .full)
+        clearProgress()
 
     case "scan-files":
         try store.open()
@@ -187,9 +201,11 @@ func run() async throws -> Int32 {
         let scanner = FileScanner(
             config: config, store: store, hasher: hasher,
             exclusions: exclusions, alertManager: alertManager,
-            raidScanner: raidScanner, logger: logger
+            raidScanner: raidScanner, logger: logger,
+            onProgress: progressHandler
         )
         _ = try await scanner.scan(mode: .filesOnly)
+        clearProgress()
 
     case "scan-raid":
         let raidScanner = RAIDScanner(config: config.raid, logger: logger)
@@ -213,9 +229,11 @@ func run() async throws -> Int32 {
         let scanner = FileScanner(
             config: config, store: store, hasher: hasher,
             exclusions: exclusions, alertManager: alertManager,
-            raidScanner: raidScanner, logger: logger
+            raidScanner: raidScanner, logger: logger,
+            onProgress: progressHandler
         )
         let result = try await scanner.scan(mode: .baseline)
+        clearProgress()
         print("Baseline complete. \(result.filesNew + result.filesWalked) file(s) indexed. Run --mode scan on future runs.")
 
     case "upgrade-hash":
