@@ -29,6 +29,7 @@ public final class SQLiteManifestStore: ManifestStore {
     private var stmtLastScan: OpaquePointer?
     private var stmtFilesToVerify: OpaquePointer?
     private var stmtSelectByAlgorithm: OpaquePointer?
+    private var stmtAllRecords: OpaquePointer?
 
     public init(path: URL) {
         self.path = path
@@ -59,13 +60,13 @@ public final class SQLiteManifestStore: ManifestStore {
         let stmts: [OpaquePointer?] = [
             stmtUpsertFile, stmtSelectFile, stmtAllPaths, stmtMarkMissing,
             stmtInsertEvent, stmtInsertScan, stmtUpdateScan, stmtLastScan,
-            stmtFilesToVerify, stmtSelectByAlgorithm
+            stmtFilesToVerify, stmtSelectByAlgorithm, stmtAllRecords
         ]
         for stmt in stmts { sqlite3_finalize(stmt) }
         stmtUpsertFile = nil; stmtSelectFile = nil; stmtAllPaths = nil
         stmtMarkMissing = nil; stmtInsertEvent = nil; stmtInsertScan = nil
         stmtUpdateScan = nil; stmtLastScan = nil; stmtFilesToVerify = nil
-        stmtSelectByAlgorithm = nil
+        stmtSelectByAlgorithm = nil; stmtAllRecords = nil
 
         sqlite3_close(db)
         db = nil
@@ -139,6 +140,22 @@ public final class SQLiteManifestStore: ManifestStore {
             }
         }
         return paths
+    }
+
+    public func allRecords() throws -> [FileRecord] {
+        guard let stmt = stmtAllRecords else { throw AppError.database("Database not open") }
+        defer { sqlite3_reset(stmt) }
+
+        var results: [FileRecord] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            guard rc == SQLITE_ROW else {
+                throw AppError.database("SELECT all records failed: \(dbError())")
+            }
+            results.append(extractFileRecord(from: stmt))
+        }
+        return results
     }
 
     public func markMissing(path: String) throws {
@@ -360,6 +377,10 @@ public final class SQLiteManifestStore: ManifestStore {
             SELECT id, path, size, mtime, hash, hash_algorithm, first_seen, last_verified, last_modified, status
             FROM files WHERE hash_algorithm = ?
             """)
+
+        stmtAllRecords = try prepare(
+            "SELECT id, path, size, mtime, hash, hash_algorithm, first_seen, last_verified, last_modified, status FROM files"
+        )
     }
 
     // MARK: - Statement execution helpers

@@ -130,6 +130,10 @@ public actor FileScanner {
     private func runFilePhases(mode: ScanMode, result: ScanResult) async throws -> ScanResult {
         var result = result
 
+        // Pre-scan: sync primary → replica (no-op if no replica configured)
+        logger.info("Syncing replica database (if configured)")
+        try store.syncReplica()
+
         // Phase 1: directory walk + triage
         logger.info("Phase 1: Directory walk and triage")
         let (toHash, pathsSeen) = try runPhase1(result: &result)

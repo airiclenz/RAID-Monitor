@@ -133,7 +133,7 @@ func run() async throws -> Int32 {
         }
     }
     let clearProgress = {
-        if isTerminal { fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\r", stderr) }
+        if isTerminal { fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\n", stderr) }
     }
 
     // Mode dispatch

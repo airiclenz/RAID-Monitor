@@ -39,4 +39,16 @@ public protocol ManifestStore: AnyObject {
     /// Return up to `limit` file records whose `last_verified` is older than `date`,
     /// ordered ascending by `last_verified` (oldest first).
     func filesToVerify(before date: Date, limit: Int) throws -> [FileRecord]
+
+    // MARK: Replica sync
+    /// All file records in the manifest. Used for replica sync.
+    func allRecords() throws -> [FileRecord]
+
+    /// Sync all file records from primary to replica. No-op for non-mirrored stores.
+    func syncReplica() throws
+}
+
+// Default no-op for syncReplica — only MirroredManifestStore overrides this.
+public extension ManifestStore {
+    func syncReplica() throws {}
 }
