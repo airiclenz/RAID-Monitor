@@ -43,6 +43,9 @@ public actor FileScanner {
 	private let logger: Logger
 	private let onProgress: ProgressHandler?
 
+	/// Files above this size get per-file byte progress in the progress line.
+	private let largeFileThreshold: Int64 = 100 * 1024 * 1024
+
 	// ============================================================================
 	public init(
 		config: Config,
@@ -280,12 +283,20 @@ public actor FileScanner {
 			while inFlight < maxThreads, let item = iterator.next() {
 				let fileHasher = self.hasher
 				let (url, existing) = item
+				let fileProgress = buildFileProgress(
+					url: url,
+					phaseLabel: "Phase 2: Hashing",
+					completed: completed,
+					total: total,
+					phaseStart: phaseStart
+				)
 				group.addTask {
 					try await self.hashFile(
 						url: url,
 						existingRecord: existing,
 						hasher: fileHasher,
-						now: now
+						now: now,
+						onProgress: fileProgress
 					)
 				}
 				inFlight += 1
@@ -301,7 +312,11 @@ public actor FileScanner {
 					completed: completed,
 					total: total
 				)
-				onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(eta)")
+				let fileName = record.map {
+					truncateFilename(($0.path as NSString).lastPathComponent)
+				} ?? ""
+				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
+				onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(nameSegment)\(eta)")
 
 				if let fileRecord = record {
 					// Track new/modified for reporting before persisting as .ok
@@ -324,12 +339,20 @@ public actor FileScanner {
 				if let item = iterator.next() {
 					let fileHasher = self.hasher
 					let (url, existing) = item
+					let fileProgress = buildFileProgress(
+						url: url,
+						phaseLabel: "Phase 2: Hashing",
+						completed: completed,
+						total: total,
+						phaseStart: phaseStart
+					)
 					group.addTask {
 						try await self.hashFile(
 							url: url,
 							existingRecord: existing,
 							hasher: fileHasher,
-							now: now
+							now: now,
+							onProgress: fileProgress
 						)
 					}
 					inFlight += 1
@@ -348,10 +371,11 @@ public actor FileScanner {
 		url: URL,
 		existingRecord: FileRecord?,
 		hasher: any FileHasher,
-		now: Date
+		now: Date,
+		onProgress fileProgress: HashProgressHandler? = nil
 	) async throws -> FileRecord? {
 		do {
-			let digest = try hasher.hash(fileAt: url)
+			let digest = try hasher.hash(fileAt: url, onProgress: fileProgress)
 			let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
 			let size = (attrs[.size] as? Int64) ?? 0
 			let mtime = (attrs[.modificationDate] as? Date) ?? now
@@ -414,11 +438,20 @@ public actor FileScanner {
 
 			while inFlight < maxThreads, let record = iterator.next() {
 				let fileHasher = self.hasher
+				let recordURL = URL(fileURLWithPath: record.path)
+				let fileProgress = buildFileProgress(
+					url: recordURL,
+					phaseLabel: "Phase 3: Verifying",
+					completed: completed,
+					total: total,
+					phaseStart: phaseStart
+				)
 				group.addTask {
 					try await self.verifyFile(
 						record: record,
 						hasher: fileHasher,
-						now: now
+						now: now,
+						onProgress: fileProgress
 					)
 				}
 				inFlight += 1
@@ -434,7 +467,11 @@ public actor FileScanner {
 					completed: completed,
 					total: total
 				)
-				onProgress?("Phase 3: Verifying \(completed)/\(total) (\(pct)%)\(eta)")
+				let fileName = verifiedRecord.map {
+					truncateFilename(($0.path as NSString).lastPathComponent)
+				} ?? ""
+				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
+				onProgress?("Phase 3: Verifying \(completed)/\(total) (\(pct)%)\(nameSegment)\(eta)")
 
 				if let verifiedResult = verifiedRecord {
 					pendingRecords.append(verifiedResult)
@@ -464,11 +501,20 @@ public actor FileScanner {
 
 				if let record = iterator.next() {
 					let fileHasher = self.hasher
+					let recordURL = URL(fileURLWithPath: record.path)
+					let fileProgress = buildFileProgress(
+						url: recordURL,
+						phaseLabel: "Phase 3: Verifying",
+						completed: completed,
+						total: total,
+						phaseStart: phaseStart
+					)
 					group.addTask {
 						try await self.verifyFile(
 							record: record,
 							hasher: fileHasher,
-							now: now
+							now: now,
+							onProgress: fileProgress
 						)
 					}
 					inFlight += 1
@@ -485,7 +531,8 @@ public actor FileScanner {
 	private func verifyFile(
 		record: FileRecord,
 		hasher: any FileHasher,
-		now: Date
+		now: Date,
+		onProgress fileProgress: HashProgressHandler? = nil
 	) async throws -> FileRecord? {
 		let url = URL(fileURLWithPath: record.path)
 
@@ -505,7 +552,7 @@ public actor FileScanner {
 		}
 
 		do {
-			let computed = try hasher.hash(fileAt: url)
+			let computed = try hasher.hash(fileAt: url, onProgress: fileProgress)
 			var updated = record
 			if computed == record.hash {
 				// Clean — update last_verified timestamp
@@ -564,6 +611,41 @@ public actor FileScanner {
 	// ============================================================================
 	private func scanSummaryJSON(_ scanResult: ScanResult) -> String {
 		"{\"walked\":\(scanResult.filesWalked),\"new\":\(scanResult.filesNew),\"modified\":\(scanResult.filesModified),\"verified\":\(scanResult.filesVerified),\"corrupted\":\(scanResult.filesCorrupted),\"missing\":\(scanResult.filesMissing)}"
+	}
+
+	// ============================================================================
+	/// Build a per-file progress callback for large files.
+	/// For files below the threshold, returns nil (no per-chunk progress).
+	private func buildFileProgress(
+		url: URL,
+		phaseLabel: String,
+		completed: Int,
+		total: Int,
+		phaseStart: Date
+	) -> HashProgressHandler? {
+		let fileSize = Int64(
+			(try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+		)
+		guard fileSize > largeFileThreshold, let onProg = onProgress else {
+			return nil
+		}
+
+		let fileName = truncateFilename(url.lastPathComponent)
+		let overallPct = total > 0 ? (completed * 100) / total : 0
+
+		return { bytesHashed, totalSize in
+			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
+			onProg("\(phaseLabel) \(completed)/\(total) (\(overallPct)%) — \(fileName) (\(filePct)%)")
+		}
+	}
+
+	// ============================================================================
+	private func truncateFilename(
+		_ name: String,
+		maxLength: Int = 30
+	) -> String {
+		guard name.count > maxLength else { return name }
+		return String(name.prefix(maxLength - 1)) + "…"
 	}
 
 	// ============================================================================

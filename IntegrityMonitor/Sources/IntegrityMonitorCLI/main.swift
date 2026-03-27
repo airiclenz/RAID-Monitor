@@ -154,19 +154,18 @@ func run() async throws -> Int32 {
 			if message.isEmpty {
 				// Empty message = end of progress block; clear line only if progress was shown
 				if progressActive {
-					fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\n", stderr)
+					fputs("\r\u{1B}[K\n", stderr)
 					progressActive = false
 				}
 			} else {
 				progressActive = true
-				let padded = message.padding(toLength: max(message.count, 80), withPad: " ", startingAt: 0)
-				fputs("\r\(padded)", stderr)
+				fputs("\r\(message)\u{1B}[K", stderr)
 			}
 		}
 	}
 	let clearProgress = {
 		if isTerminal && progressActive {
-			fputs("\r\("".padding(toLength: 80, withPad: " ", startingAt: 0))\n", stderr)
+			fputs("\r\u{1B}[K\n", stderr)
 			progressActive = false
 		}
 	}

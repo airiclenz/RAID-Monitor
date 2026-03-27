@@ -5,12 +5,12 @@ import Foundation
 // ---------------------------------------------------------------------------
 
 public struct Config: Codable {
-	public var watchPaths: [String]
+
 	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+	public var watchPaths: [String]
 	public var exclude: ExclusionConfig
 	public var hashAlgorithm: String
 	public var verificationIntervalDays: Int
-	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 	public var database: DatabaseConfig
 	public var notifications: NotificationConfig
 	public var performance: PerformanceConfig
@@ -61,9 +61,10 @@ public struct Config: Codable {
 }
 
 public struct ExclusionConfig: Codable {
+
+	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 	public var pathPatterns: [String]
 	public var directoryPatterns: [String]
-	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 	public var minSizeBytes: Int?
 	public var maxSizeBytes: Int?
 
@@ -105,10 +106,11 @@ public struct DatabaseConfig: Codable {
 }
 
 public struct NotificationConfig: Codable {
+
+	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 	public var onCorruption: Bool
 	public var onRAIDDegraded: Bool
 	public var onMissingFile: Bool
-	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 	public var onScanComplete: Bool
 	public var onScanCompleteWithIssues: Bool
 
