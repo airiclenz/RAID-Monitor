@@ -46,10 +46,9 @@ public struct MacOSAlertChannel: AlertChannel {
 
 		do {
 			try process.run()
-			process.waitUntilExit()
-			if process.terminationStatus != 0 {
-				logger.warn("Notification helper exited with code \(process.terminationStatus)")
-			}
+			// Fire-and-forget: the notify helper has its own 10-second timeout
+			// and exits via NSApplication.terminate(nil). Waiting here would block
+			// the FileScanner actor thread, stalling all scan work.
 		} catch {
 			logger.warn("Failed to launch notification helper: \(error)")
 		}

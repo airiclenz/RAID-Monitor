@@ -8,7 +8,7 @@ import Foundation
 // file when it exceeds maxBytes (one archive: .log.1).
 // ---------------------------------------------------------------------------
 
-public final class Logger {
+public final class Logger: @unchecked Sendable {
 
 	public enum Level: Int, Comparable, CustomStringConvertible {
 		case debug = 0

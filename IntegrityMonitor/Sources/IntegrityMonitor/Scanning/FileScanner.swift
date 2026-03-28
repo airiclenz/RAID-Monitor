@@ -189,7 +189,7 @@ public actor FileScanner {
 
 		// Phase 1: directory walk + triage
 		logger.info("Phase 1: Directory walk and triage")
-		let (toHash, pathsSeen) = try runPhase1(result: &result)
+		let (toHash, pathsSeen, walkedPrefixes) = try runPhase1(result: &result)
 		onProgress?("")	 // end progress block
 
 		// Phase 2: hash new/modified files
@@ -209,7 +209,7 @@ public actor FileScanner {
 
 		// Phase 4: missing file reconciliation
 		logger.info("Phase 4: Missing file reconciliation")
-		try runPhase4(pathsSeen: pathsSeen, result: &result)
+		try runPhase4(pathsSeen: pathsSeen, walkedPrefixes: walkedPrefixes, result: &result)
 
 		return result
 	}
@@ -231,11 +231,25 @@ public actor FileScanner {
 	// MARK: - Phase 1: Walk
 
 	// ============================================================================
-	private func runPhase1(result: inout ScanResult) throws -> (toHash: [(URL, FileRecord?)], pathsSeen: Set<String>) {
+	private func runPhase1(result: inout ScanResult) throws -> (toHash: [(URL, FileRecord?)], pathsSeen: Set<String>, walkedPrefixes: Set<String>) {
 		var toHash: [(URL, FileRecord?)] = []
 		var pathsSeen = Set<String>()
+		var walkedPrefixes = Set<String>()
 
 		for watchURL in config.resolvedWatchPaths {
+			// Verify the watch path is accessible before enumerating.
+			// If a volume is unmounted, we must skip it entirely to avoid
+			// Phase 4 marking every file on that volume as missing.
+			var isDir: ObjCBool = false
+			guard FileManager.default.fileExists(
+				atPath: watchURL.path,
+				isDirectory: &isDir
+			), isDir.boolValue else {
+				logger.warn("Watch path inaccessible (volume may be unmounted): \(watchURL.path)")
+				continue
+			}
+			walkedPrefixes.insert(watchURL.path)
+
 			guard let enumerator = FileManager.default.enumerator(
 				at: watchURL,
 				includingPropertiesForKeys: [
@@ -306,7 +320,7 @@ public actor FileScanner {
 		}
 
 		onProgress?("Phase 1: \(result.filesWalked) files discovered, \(toHash.count) to hash")
-		return (toHash, pathsSeen)
+		return (toHash, pathsSeen, walkedPrefixes)
 	}
 
 	// MARK: - Phase 2: Hash new/modified
@@ -348,14 +362,15 @@ public actor FileScanner {
 				let semaphore = volumeSemaphore(for: url.path)
 				group.addTask {
 					await semaphore?.acquire()
-					defer { Task { await semaphore?.release() } }
-					return try await self.hashFile(
+					let result = self.hashFile(
 						url: url,
 						existingRecord: existing,
 						hasher: fileHasher,
 						now: now,
 						onProgress: fileProgress
 					)
+					await semaphore?.release()
+					return result
 				}
 				inFlight += 1
 			}
@@ -377,9 +392,22 @@ public actor FileScanner {
 				onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(eta)\(nameSegment)")
 
 				if let fileRecord = record {
-					// Track new/modified for reporting before persisting as .ok
-					if fileRecord.status == .new { result.filesNew += 1 }
-					else if fileRecord.status == .modified { result.filesModified += 1 }
+					// Track new/modified and log events (moved here from hashFile
+					// so that DB writes stay on the actor while hashing runs
+					// concurrently off-actor via nonisolated)
+					if fileRecord.status == .new {
+						result.filesNew += 1
+						try store.logEvent(ScanEvent(
+							eventType: ScanEvent.fileNew,
+							path: fileRecord.path
+						))
+					} else if fileRecord.status == .modified {
+						result.filesModified += 1
+						try store.logEvent(ScanEvent(
+							eventType: ScanEvent.fileModified,
+							path: fileRecord.path
+						))
+					}
 
 					// Persist with .ok so the file enters Phase 3 rolling verification
 					var persisted = fileRecord
@@ -407,14 +435,15 @@ public actor FileScanner {
 					let semaphore = volumeSemaphore(for: url.path)
 					group.addTask {
 						await semaphore?.acquire()
-						defer { Task { await semaphore?.release() } }
-						return try await self.hashFile(
+						let result = self.hashFile(
 							url: url,
 							existingRecord: existing,
 							hasher: fileHasher,
 							now: now,
 							onProgress: fileProgress
 						)
+						await semaphore?.release()
+						return result
 					}
 					inFlight += 1
 				}
@@ -428,24 +457,27 @@ public actor FileScanner {
 	}
 
 	// ============================================================================
-	private func hashFile(
+	/// Hash a single file and return a FileRecord. Runs nonisolated so that
+	/// file I/O executes concurrently on the cooperative thread pool instead
+	/// of being serialised through the actor. Event logging is done by the
+	/// caller (on the actor) after the result is collected.
+	nonisolated private func hashFile(
 		url: URL,
 		existingRecord: FileRecord?,
 		hasher: any FileHasher,
 		now: Date,
 		onProgress fileProgress: HashProgressHandler? = nil
-	) async throws -> FileRecord? {
+	) -> FileRecord? {
 		do {
 			let digest = try hasher.hash(fileAt: url, onProgress: fileProgress)
 			let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
 			let size = (attrs[.size] as? Int64) ?? 0
 			let mtime = (attrs[.modificationDate] as? Date) ?? now
 
-			// Determine status: new vs modified (used for event logging and counter tracking)
 			let status: FileStatus = (existingRecord == nil) ? .new : .modified
 			let firstSeen = existingRecord?.firstSeen ?? now
 
-			let record = FileRecord(
+			return FileRecord(
 				path: url.path,
 				size: size,
 				mtime: mtime,
@@ -456,19 +488,6 @@ public actor FileScanner {
 				lastModified: (status == .modified) ? now : existingRecord?.lastModified,
 				status: status
 			)
-
-			if status == .new {
-				try store.logEvent(ScanEvent(
-					eventType: ScanEvent.fileNew,
-					path: url.path
-				))
-			} else {
-				try store.logEvent(ScanEvent(
-					eventType: ScanEvent.fileModified,
-					path: url.path
-				))
-			}
-			return record
 		} catch {
 			logger.warn("Cannot hash \(url.path): \(error)")
 			return nil
@@ -510,13 +529,14 @@ public actor FileScanner {
 				let semaphore = volumeSemaphore(for: record.path)
 				group.addTask {
 					await semaphore?.acquire()
-					defer { Task { await semaphore?.release() } }
-					return try await self.verifyFile(
+					let result = self.verifyFile(
 						record: record,
 						hasher: fileHasher,
 						now: now,
 						onProgress: fileProgress
 					)
+					await semaphore?.release()
+					return result
 				}
 				inFlight += 1
 			}
@@ -576,13 +596,14 @@ public actor FileScanner {
 					let semaphore = volumeSemaphore(for: record.path)
 					group.addTask {
 						await semaphore?.acquire()
-						defer { Task { await semaphore?.release() } }
-						return try await self.verifyFile(
+						let result = self.verifyFile(
 							record: record,
 							hasher: fileHasher,
 							now: now,
 							onProgress: fileProgress
 						)
+						await semaphore?.release()
+						return result
 					}
 					inFlight += 1
 				}
@@ -595,12 +616,14 @@ public actor FileScanner {
 	}
 
 	// ============================================================================
-	private func verifyFile(
+	/// Re-verify a single file against its stored hash. Runs nonisolated so
+	/// that file I/O executes concurrently on the cooperative thread pool.
+	nonisolated private func verifyFile(
 		record: FileRecord,
 		hasher: any FileHasher,
 		now: Date,
 		onProgress fileProgress: HashProgressHandler? = nil
-	) async throws -> FileRecord? {
+	) -> FileRecord? {
 		let url = URL(fileURLWithPath: record.path)
 
 		// Check current mtime/size before hashing
@@ -642,28 +665,50 @@ public actor FileScanner {
 	// ============================================================================
 	private func runPhase4(
 		pathsSeen: Set<String>,
+		walkedPrefixes: Set<String>,
 		result: inout ScanResult
 	) throws {
 		try store.forEachPathBatch(batchSize: 5000) { batch in
 			for path in batch {
 				guard !pathsSeen.contains(path) else { continue }
-				// Only mark as missing if we don't already know it's missing or corrupted
-				if let existing = try store.record(for: path),
-				   existing.status != .missing {
-					try store.markMissing(path: path)
-					try store.logEvent(ScanEvent(
-						eventType: ScanEvent.fileMissing,
-						path: path
-					))
-					result.filesMissing += 1
 
-					alertManager.sendIfEnabled(missingFile: Alert(
-						title: "File Missing",
-						subtitle: (path as NSString).lastPathComponent,
-						body: "A previously tracked file is no longer present:\n\(path)",
-						severity: .warning
-					))
+				// Skip files under watch paths that were inaccessible (volume
+				// may be unmounted). Without this guard, a temporary mount
+				// failure would mark every file on that volume as missing.
+				guard walkedPrefixes.contains(where: { path.hasPrefix($0) }) else {
+					continue
 				}
+
+				guard let existing = try store.record(for: path),
+					  existing.status != .missing else {
+					continue
+				}
+
+				// Skip files that now match exclusion rules added since the
+				// file was first tracked. Without this, adding an exclusion
+				// pattern would trigger false "missing" alerts for every
+				// previously-tracked file matching the new pattern.
+				let fileURL = URL(fileURLWithPath: path)
+				guard exclusions.shouldInclude(
+					fileAt: fileURL,
+					size: Int(existing.size)
+				) else {
+					continue
+				}
+
+				try store.markMissing(path: path)
+				try store.logEvent(ScanEvent(
+					eventType: ScanEvent.fileMissing,
+					path: path
+				))
+				result.filesMissing += 1
+
+				alertManager.sendIfEnabled(missingFile: Alert(
+					title: "File Missing",
+					subtitle: (path as NSString).lastPathComponent,
+					body: "A previously tracked file is no longer present:\n\(path)",
+					severity: .warning
+				))
 			}
 		}
 	}
@@ -767,18 +812,25 @@ actor VolumeSemaphore {
 			current += 1
 			return
 		}
+		// Wait until a slot is available. The slot is passed to us directly
+		// by release() (baton-passing) — current is NOT incremented here
+		// because release() skipped the decrement when handing off.
 		await withCheckedContinuation { continuation in
 			waiters.append(continuation)
 		}
-		current += 1
 	}
 
 	// ============================================================================
 	func release() {
-		current -= 1
 		if !waiters.isEmpty {
+			// Baton-passing: hand the slot directly to the next waiter without
+			// decrementing current. This prevents a race where another acquire()
+			// could slip in between the decrement and the waiter's resumption,
+			// causing current to exceed the limit.
 			let waiter = waiters.removeFirst()
 			waiter.resume()
+		} else {
+			current -= 1
 		}
 	}
 }
