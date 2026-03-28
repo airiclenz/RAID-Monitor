@@ -117,6 +117,11 @@ public final class MirroredManifestStore: ManifestStore {
 		try primary.filesToVerify(before: date, limit: limit)
 	}
 
+	// ============================================================================
+	public func allFilesToVerify() throws -> [FileRecord] {
+		try primary.allFilesToVerify()
+	}
+
 	// MARK: - Streaming iteration (primary only)
 
 	// ============================================================================

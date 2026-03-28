@@ -76,6 +76,7 @@ func printUsage() {
 	  scan			  Full scan: RAID check + file integrity
 	  scan-files	  File integrity scan only (no RAID)
 	  scan-raid		  RAID health check only (no file scanning)
+	  verify		  Re-verify all tracked files against stored hashes
 	  upgrade-hash	  Migrate hash algorithm (--from <alg> --to <alg>)
 	  verify-db		  Cross-check primary vs replica database counts
 	  report		  Print last scan summary
@@ -117,7 +118,7 @@ func run() async throws -> Int32 {
 	}
 
 	// Acquire process lock for modes that modify state
-	let exclusiveModes: Set<String> = ["scheduled", "scan", "scan-files", "scan-raid", "upgrade-hash"]
+	let exclusiveModes: Set<String> = ["scheduled", "scan", "scan-files", "scan-raid", "verify", "upgrade-hash"]
 	let processLock = ProcessLock(directory: configURL.deletingLastPathComponent())
 	if exclusiveModes.contains(mode) {
 		if let reason = processLock.tryAcquire() {
@@ -297,6 +298,29 @@ func run() async throws -> Int32 {
 		for alert in alerts {
 			alertManager.sendIfEnabled(raidAlert: alert)
 		}
+
+	case "verify":
+		try store.open()
+		defer { store.close() }
+		let hasher = try HasherFactory.make(for: config.hashAlgorithm)
+		let exclusions = ExclusionRules(config: config.exclude)
+		let raidScanner = RAIDScanner(
+			config: config.raid,
+			logger: logger
+		)
+		let scanner = FileScanner(
+			config: config,
+			store: store,
+			hasher: hasher,
+			exclusions: exclusions,
+			alertManager: alertManager,
+			raidScanner: raidScanner,
+			logger: logger,
+			onProgress: progressHandler
+		)
+		let result = try await scanner.scan(mode: .verifyAll)
+		clearProgress()
+		print("Verification complete. \(result.filesVerified) file(s) verified, \(result.filesCorrupted) corrupted.")
 
 	case "upgrade-hash":
 		guard let fromAlg = fromAlg, let toAlg = toAlg else {

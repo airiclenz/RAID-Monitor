@@ -26,6 +26,8 @@ public actor FileScanner {
 		case full
 		/// File integrity only: Phases 1–4 (no RAID check)
 		case filesOnly
+		/// Re-verify all tracked files against stored hashes (no walk, no missing-file check)
+		case verifyAll
 	}
 
 	/// Called with a progress string to display (e.g. "Phase 1: 1234 files walked").
@@ -78,13 +80,18 @@ public actor FileScanner {
 		logger.info("=== Scan started (mode: \(mode)) ===")
 
 		do {
-			// Phase 0: RAID health check
-			if mode != .filesOnly && config.raid.enabled {
-				try await runRAIDPhase()
-			}
+			if mode == .verifyAll {
+				// Verify-all: re-hash every tracked file, no walk or missing-file check
+				result = try await runVerifyAll(result: result)
+			} else {
+				// Phase 0: RAID health check
+				if mode != .filesOnly && config.raid.enabled {
+					try await runRAIDPhase()
+				}
 
-			// Phases 1–4: file integrity
-			result = try await runFilePhases(result: result)
+				// Phases 1–4: file integrity
+				result = try await runFilePhases(result: result)
+			}
 			result.status = .completed
 
 		} catch {
@@ -170,6 +177,20 @@ public actor FileScanner {
 		// Phase 4: missing file reconciliation
 		logger.info("Phase 4: Missing file reconciliation")
 		try runPhase4(pathsSeen: pathsSeen, result: &result)
+
+		return result
+	}
+
+	// MARK: - Verify-all mode
+
+	// ============================================================================
+	private func runVerifyAll(result: ScanResult) async throws -> ScanResult {
+		var result = result
+
+		let toVerify = try store.allFilesToVerify()
+		logger.info("Verify-all: re-verifying \(toVerify.count) file(s)")
+		try await runPhase3(toVerify: toVerify, result: &result)
+		onProgress?("")	 // end progress block
 
 		return result
 	}

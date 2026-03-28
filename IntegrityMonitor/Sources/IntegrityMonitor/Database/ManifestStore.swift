@@ -43,6 +43,10 @@ public protocol ManifestStore: AnyObject {
 		limit: Int
 	) throws -> [FileRecord]
 
+	/// Return all file records with status 'ok', ordered by last_verified ascending.
+	/// Used by `--mode verify` for full on-demand re-verification.
+	func allFilesToVerify() throws -> [FileRecord]
+
 	// MARK: Streaming iteration
 	/// Iterate all file records in batches. Used for replica sync.
 	func forEachRecordBatch(

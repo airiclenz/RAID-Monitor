@@ -30,6 +30,7 @@ public final class SQLiteManifestStore: ManifestStore {
 	private var stmtUpdateScan: OpaquePointer?
 	private var stmtLastScan: OpaquePointer?
 	private var stmtFilesToVerify: OpaquePointer?
+	private var stmtAllFilesToVerify: OpaquePointer?
 	private var stmtSelectByAlgorithm: OpaquePointer?
 	private var stmtAllRecords: OpaquePointer?
 
@@ -66,13 +67,15 @@ public final class SQLiteManifestStore: ManifestStore {
 		let stmts: [OpaquePointer?] = [
 			stmtUpsertFile, stmtSelectFile, stmtAllPaths, stmtMarkMissing,
 			stmtInsertEvent, stmtInsertScan, stmtUpdateScan, stmtLastScan,
-			stmtFilesToVerify, stmtSelectByAlgorithm, stmtAllRecords
+			stmtFilesToVerify, stmtAllFilesToVerify, stmtSelectByAlgorithm,
+			stmtAllRecords
 		]
 		for stmt in stmts { sqlite3_finalize(stmt) }
 		stmtUpsertFile = nil; stmtSelectFile = nil; stmtAllPaths = nil
 		stmtMarkMissing = nil; stmtInsertEvent = nil; stmtInsertScan = nil
 		stmtUpdateScan = nil; stmtLastScan = nil; stmtFilesToVerify = nil
-		stmtSelectByAlgorithm = nil; stmtAllRecords = nil
+		stmtAllFilesToVerify = nil; stmtSelectByAlgorithm = nil
+		stmtAllRecords = nil
 
 		sqlite3_close(db)
 		db = nil
@@ -314,6 +317,23 @@ public final class SQLiteManifestStore: ManifestStore {
 		return results
 	}
 
+	// ============================================================================
+	public func allFilesToVerify() throws -> [FileRecord] {
+		guard let stmt = stmtAllFilesToVerify else { throw AppError.database("Database not open") }
+		defer { sqlite3_reset(stmt) }
+
+		var results: [FileRecord] = []
+		while true {
+			let rc = sqlite3_step(stmt)
+			if rc == SQLITE_DONE { break }
+			guard rc == SQLITE_ROW else {
+				throw AppError.database("allFilesToVerify query failed: \(dbError())")
+			}
+			results.append(extractFileRecord(from: stmt))
+		}
+		return results
+	}
+
 	// MARK: - Schema
 
 	// ============================================================================
@@ -435,6 +455,13 @@ public final class SQLiteManifestStore: ManifestStore {
 			WHERE last_verified < ? AND status = 'ok'
 			ORDER BY last_verified ASC
 			LIMIT ?
+			""")
+
+		stmtAllFilesToVerify = try prepare("""
+			SELECT id, path, size, mtime, hash, hash_algorithm, first_seen, last_verified, last_modified, status
+			FROM files
+			WHERE status = 'ok'
+			ORDER BY last_verified ASC
 			""")
 
 		stmtSelectByAlgorithm = try prepare("""

@@ -287,6 +287,7 @@ raid-integrity-monitor --mode <mode>
 | `scan` | Full scan: RAID check + file integrity — runs everything immediately regardless of schedule. New files are indexed automatically. |
 | `scan-files` | File integrity only — no RAID check |
 | `scan-raid` | RAID health check only — prints current array status |
+| `verify` | Re-verify all tracked files against stored hashes in one run — full integrity check on demand |
 | `report` | Print a summary of the last scan |
 | `test` | Verify the setup and send a test notification |
 | `upgrade-hash` | Migrate all stored hashes to a new algorithm: `--from sha256 --to <new>` |
