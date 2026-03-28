@@ -48,6 +48,12 @@ public actor FileScanner {
 	/// Files above this size get per-file byte progress in the progress line.
 	private let largeFileThreshold: Int64 = 100 * 1024 * 1024
 
+	/// Per-volume concurrency info, keyed by device ID.
+	private let volumeMap: [dev_t: VolumeInfo]
+
+	/// Per-volume semaphores that gate concurrent hash reads.
+	private let volumeSemaphores: [dev_t: VolumeSemaphore]
+
 	// ============================================================================
 	public init(
 		config: Config,
@@ -67,6 +73,33 @@ public actor FileScanner {
 		self.raidScanner = raidScanner
 		self.logger = logger
 		self.onProgress = onProgress
+
+		self.volumeMap = VolumeDetector.detectVolumes(
+			for: config.resolvedWatchPaths,
+			globalMaxThreads: config.performance.maxHashThreads,
+			overrides: config.performance.volumeThreadOverrides ?? [:],
+			logger: logger
+		)
+
+		var semaphores: [dev_t: VolumeSemaphore] = [:]
+		for (devID, info) in self.volumeMap {
+			semaphores[devID] = VolumeSemaphore(limit: info.maxHashThreads)
+		}
+		self.volumeSemaphores = semaphores
+	}
+
+	// ============================================================================
+	/// Return the semaphore for a file's volume, or nil if unresolved.
+	private func volumeSemaphore(for path: String) -> VolumeSemaphore? {
+		let devID = VolumeDetector.deviceID(for: path)
+		return volumeSemaphores[devID]
+	}
+
+	// ============================================================================
+	/// Total hash concurrency across all volumes.
+	private var totalHashThreads: Int {
+		let sum = volumeMap.values.reduce(0) { $0 + $1.maxHashThreads }
+		return sum > 0 ? sum : config.performance.maxHashThreads
 	}
 
 	// MARK: - Public entry point
@@ -285,7 +318,7 @@ public actor FileScanner {
 	) async throws {
 		guard !toHash.isEmpty else { return }
 
-		let maxThreads = config.performance.maxHashThreads
+		let maxThreads = totalHashThreads
 		let batchSize = config.performance.dbBatchSize
 		let total = toHash.count
 		let now = Date()
@@ -293,7 +326,8 @@ public actor FileScanner {
 		var completed = 0
 
 		// Worker pool: keep exactly maxThreads tasks in-flight at once.
-		// We drain with group.next() and add a new task after each completes.
+		// Per-volume semaphores ensure each disk is accessed by at most its
+		// configured number of concurrent hash operations.
 		var pendingRecords: [FileRecord] = []
 
 		try await withThrowingTaskGroup(of: FileRecord?.self) { group in
@@ -311,8 +345,11 @@ public actor FileScanner {
 					total: total,
 					phaseStart: phaseStart
 				)
+				let semaphore = volumeSemaphore(for: url.path)
 				group.addTask {
-					try await self.hashFile(
+					await semaphore?.acquire()
+					defer { Task { await semaphore?.release() } }
+					return try await self.hashFile(
 						url: url,
 						existingRecord: existing,
 						hasher: fileHasher,
@@ -367,8 +404,11 @@ public actor FileScanner {
 						total: total,
 						phaseStart: phaseStart
 					)
+					let semaphore = volumeSemaphore(for: url.path)
 					group.addTask {
-						try await self.hashFile(
+						await semaphore?.acquire()
+						defer { Task { await semaphore?.release() } }
+						return try await self.hashFile(
 							url: url,
 							existingRecord: existing,
 							hasher: fileHasher,
@@ -444,7 +484,7 @@ public actor FileScanner {
 	) async throws {
 		guard !toVerify.isEmpty else { return }
 
-		let maxThreads = config.performance.maxHashThreads
+		let maxThreads = totalHashThreads
 		let batchSize = config.performance.dbBatchSize
 		let total = toVerify.count
 		let now = Date()
@@ -467,8 +507,11 @@ public actor FileScanner {
 					total: total,
 					phaseStart: phaseStart
 				)
+				let semaphore = volumeSemaphore(for: record.path)
 				group.addTask {
-					try await self.verifyFile(
+					await semaphore?.acquire()
+					defer { Task { await semaphore?.release() } }
+					return try await self.verifyFile(
 						record: record,
 						hasher: fileHasher,
 						now: now,
@@ -530,8 +573,11 @@ public actor FileScanner {
 						total: total,
 						phaseStart: phaseStart
 					)
+					let semaphore = volumeSemaphore(for: record.path)
 					group.addTask {
-						try await self.verifyFile(
+						await semaphore?.acquire()
+						defer { Task { await semaphore?.release() } }
+						return try await self.verifyFile(
 							record: record,
 							hasher: fileHasher,
 							now: now,
@@ -691,5 +737,48 @@ public actor FileScanner {
 		if mins < 60 { return " — \(mins)m \(secs)s remaining" }
 		let hours = mins / 60
 		return " — \(hours)h \(mins % 60)m remaining"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MARK: - VolumeSemaphore
+//
+// Limits concurrent tasks per volume.  Used to ensure that each disk is
+// accessed by at most N concurrent hash operations (where N is determined
+// by the disk type or a manual config override).
+// ---------------------------------------------------------------------------
+
+actor VolumeSemaphore {
+
+	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+	private let limit: Int
+	private var current: Int = 0
+	private var waiters: [CheckedContinuation<Void, Never>] = []
+
+	// ============================================================================
+	init(limit: Int) {
+		self.limit = limit
+	}
+
+	// ============================================================================
+	func acquire() async {
+		if current < limit {
+			current += 1
+			return
+		}
+		await withCheckedContinuation { continuation in
+			waiters.append(continuation)
+		}
+		current += 1
+	}
+
+	// ============================================================================
+	func release() {
+		current -= 1
+		if !waiters.isEmpty {
+			let waiter = waiters.removeFirst()
+			waiter.resume()
+		}
 	}
 }

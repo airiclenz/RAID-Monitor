@@ -140,24 +140,28 @@ public struct PerformanceConfig: Codable {
 	public var maxHashThreads: Int
 	public var dbBatchSize: Int
 	public var maxVerificationsPerRun: Int
+	public var volumeThreadOverrides: [String: Int]?
 
 	// ============================================================================
 	public init(
 		maxHashThreads: Int = 2,
 		dbBatchSize: Int = 500,
-		maxVerificationsPerRun: Int = 1000
+		maxVerificationsPerRun: Int = 1000,
+		volumeThreadOverrides: [String: Int]? = nil
 	) {
 		self.maxHashThreads = maxHashThreads
 		self.dbBatchSize = dbBatchSize
 		self.maxVerificationsPerRun = maxVerificationsPerRun
+		self.volumeThreadOverrides = volumeThreadOverrides
 	}
 
 	// ============================================================================
 	public init(from decoder: Decoder) throws {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
-		maxHashThreads		  = try container.decodeIfPresent(Int.self, forKey: .maxHashThreads)		?? 2
-		dbBatchSize			  = try container.decodeIfPresent(Int.self, forKey: .dbBatchSize)			?? 500
+		maxHashThreads		   = try container.decodeIfPresent(Int.self, forKey: .maxHashThreads)		 ?? 2
+		dbBatchSize			   = try container.decodeIfPresent(Int.self, forKey: .dbBatchSize)			 ?? 500
 		maxVerificationsPerRun = try container.decodeIfPresent(Int.self, forKey: .maxVerificationsPerRun) ?? 1000
+		volumeThreadOverrides  = try container.decodeIfPresent([String: Int].self, forKey: .volumeThreadOverrides)
 	}
 }
 
@@ -318,6 +322,13 @@ public struct ConfigLoader {
 		}
 		if config.performance.maxHashThreads < 1 {
 			throw AppError.configValidation("performance.maxHashThreads must be >= 1")
+		}
+		if let overrides = config.performance.volumeThreadOverrides {
+			for (mountPoint, threads) in overrides {
+				if threads < 1 {
+					throw AppError.configValidation("volumeThreadOverrides[\(mountPoint)] must be >= 1")
+				}
+			}
 		}
 		if config.schedule.verificationIntervalDays < 1 {
 			throw AppError.configValidation("schedule.verificationIntervalDays must be >= 1")

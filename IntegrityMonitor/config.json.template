@@ -39,6 +39,7 @@
 
   "performance": {
     "maxHashThreads": 2,
+    "volumeThreadOverrides": {},
     "dbBatchSize": 500,
     "maxVerificationsPerRun": 25000
   },

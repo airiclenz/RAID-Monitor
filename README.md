@@ -202,6 +202,7 @@ Currently only `sha256` is supported. The algorithm name is stored alongside eve
 ```json
 "performance": {
   "maxHashThreads": 2,
+  "volumeThreadOverrides": {},
   "dbBatchSize": 500,
   "maxVerificationsPerRun": 1000
 }
@@ -209,9 +210,12 @@ Currently only `sha256` is supported. The algorithm name is stored alongside eve
 
 | Setting | Default | Description |
 |---|---|---|
-| `maxHashThreads` | `2` | Parallel hashing threads. Use 1–2 for spinning HDDs (more threads cause seek thrashing). Use 4–8 for SSDs or NVMe. |
+| `maxHashThreads` | `2` | Global fallback for parallel hashing threads. Used when auto-detection fails or a volume has no override. |
+| `volumeThreadOverrides` | `{}` | Per-volume thread overrides, keyed by mount point (e.g. `{"/Volumes/G-Raid": 1, "/Volumes/FastSSD": 8}`). Takes priority over auto-detected defaults. |
 | `dbBatchSize` | `500` | Number of records written to the database per transaction. |
 | `maxVerificationsPerRun` | `1000` | Maximum number of stable files re-verified per scan. Must be at least `total files / verificationIntervalDays` to complete a full cycle on time. See **Tuning for large libraries** below. |
+
+**Disk type auto-detection:** At scan start, the tool runs `diskutil info` on each volume's mount point and reads the `Solid State:` field. SSDs automatically get 4 hash threads, HDDs get 1. Manual overrides in `volumeThreadOverrides` take priority. If detection fails (e.g. network volumes), the global `maxHashThreads` is used as fallback. Detected volumes and their thread counts are logged at info level.
 
 #### Logging
 
@@ -283,11 +287,14 @@ maxVerificationsPerRun  >=  total files / verificationIntervalDays
 
 For example, with 1.3 million files and a 60-day cycle: 1,300,000 / 60 = ~22,000 files per daily scan.
 
-**Spinning HDDs** are seek-limited. A single hashing thread reads each file sequentially, but multiple threads cause the drive heads to jump between files, reducing throughput. Recommended settings for large libraries on spinning HDDs:
+**Disk type is auto-detected** — spinning HDDs automatically get 1 hash thread and SSDs get 4 (see **Performance** above). If you monitor volumes of mixed types, the tool handles each volume independently. You only need `volumeThreadOverrides` if the auto-detected defaults don't suit your setup:
 
 ```json
 "performance": {
-    "maxHashThreads": 1,
+    "volumeThreadOverrides": {
+        "/Volumes/G-Raid": 1,
+        "/Volumes/FastSSD": 8
+    },
     "maxVerificationsPerRun": 25000
 },
 "schedule": {
@@ -295,15 +302,12 @@ For example, with 1.3 million files and a 60-day cycle: 1,300,000 / 60 = ~22,000
 }
 ```
 
-**SSDs / NVMe** handle random reads well. You can use more threads and a shorter cycle:
+If all your volumes are the same type, you can simply set `maxHashThreads` as a global fallback (used when auto-detection fails):
 
 ```json
 "performance": {
-    "maxHashThreads": 4,
-    "maxVerificationsPerRun": 50000
-},
-"schedule": {
-    "verificationIntervalDays": 30
+    "maxHashThreads": 1,
+    "maxVerificationsPerRun": 25000
 }
 ```
 
