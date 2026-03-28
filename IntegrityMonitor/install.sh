@@ -205,6 +205,7 @@ if [[ -f "$SRC_ICON_ICNS" ]]; then
     step "Copying AppIcon.icns"
     mkdir -p "$DEST_RESOURCES"
     cp "$SRC_ICON_ICNS" "$DEST_ICNS" || die "Failed to copy AppIcon.icns"
+    xattr -cr "$DEST_ICNS" 2>/dev/null
     ok "Icon installed: $(short "$DEST_ICNS")"
 elif [[ -f "$SRC_ICON_PNG" ]]; then
     step "Converting AppIcon.png → AppIcon.icns"

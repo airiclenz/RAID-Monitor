@@ -12,3 +12,6 @@ IntegrityMonitor/.swiftpm/
 xcuserdata/
 DerivedData/
 technical-design-specification-v2.md
+
+# Other file types
+*.blend1
