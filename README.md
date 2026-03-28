@@ -15,7 +15,7 @@ Each night, RAID Integrity Monitor performs a four-phase scan:
 3. **Hash new and modified files** — computes SHA-256 for any file whose size or modification date changed
 4. **Rolling re-verification** — gradually re-hashes previously seen stable files, cycling through the full library every 30 days (configurable)
 
-A **hash mismatch on a stable file** — where the modification date and size have not changed — is the primary corruption signal. This is how silent bit-rot is caught that the filesystem itself would never report.
+A **hash mismatch on a stable file** — where the modification date and size have not changed — is the primary corruption signal. Bit-rot corrupts data blocks on disk but leaves filesystem metadata (mtime, size) untouched, so the filesystem itself never reports a problem. By re-hashing and comparing against the stored hash, RAID Integrity Monitor catches corruption that would otherwise go unnoticed until you try to open the file.
 
 ---
 
@@ -211,7 +211,7 @@ Currently only `sha256` is supported. The algorithm name is stored alongside eve
 |---|---|---|
 | `maxHashThreads` | `2` | Parallel hashing threads. Use 1–2 for spinning HDDs (more threads cause seek thrashing). Use 4–8 for SSDs or NVMe. |
 | `dbBatchSize` | `500` | Number of records written to the database per transaction. |
-| `maxVerificationsPerRun` | `1000` | Maximum number of stable files re-verified per scan. Controls how quickly the rolling verification cycle completes. |
+| `maxVerificationsPerRun` | `1000` | Maximum number of stable files re-verified per scan. Must be at least `total files / verificationIntervalDays` to complete a full cycle on time. See **Tuning for large libraries** below. |
 
 #### Logging
 
@@ -269,7 +269,51 @@ Look for `DevNode` entries like `disk8s2` — the parent disk is `disk8`.
 
 The LaunchAgent runs every `raidCheckIntervalMinutes`. Each invocation always performs a RAID health check (fast — just `diskutil` calls). File integrity scanning (directory walk, hashing, re-verification) only runs when `fileScanIntervalHours` has elapsed since the last completed scan. This gives you frequent RAID monitoring without redundant file hashing.
 
-Changing `raidCheckIntervalMinutes` requires a reinstall (`./install.sh`) to update the LaunchAgent schedule. Changes to `fileScanIntervalHours` take effect immediately.
+Changing `raidCheckIntervalMinutes` requires a reinstall (`./install.sh`) to update the LaunchAgent schedule. All other config changes take effect immediately on the next scan.
+
+#### Tuning for large libraries
+
+The default `maxVerificationsPerRun` (1000) is designed for small libraries. For large libraries you need to increase it, otherwise a full verification cycle will take far longer than `verificationIntervalDays`.
+
+The key formula:
+
+```
+maxVerificationsPerRun  >=  total files / verificationIntervalDays
+```
+
+For example, with 1.3 million files and a 60-day cycle: 1,300,000 / 60 = ~22,000 files per daily scan.
+
+**Spinning HDDs** are seek-limited. A single hashing thread reads each file sequentially, but multiple threads cause the drive heads to jump between files, reducing throughput. Recommended settings for large libraries on spinning HDDs:
+
+```json
+"performance": {
+    "maxHashThreads": 1,
+    "maxVerificationsPerRun": 25000
+},
+"schedule": {
+    "verificationIntervalDays": 60
+}
+```
+
+**SSDs / NVMe** handle random reads well. You can use more threads and a shorter cycle:
+
+```json
+"performance": {
+    "maxHashThreads": 4,
+    "maxVerificationsPerRun": 50000
+},
+"schedule": {
+    "verificationIntervalDays": 30
+}
+```
+
+After your first few scans, check how long Phase 3 (re-verification) takes:
+
+```sh
+grep "Phase 3" ~/.local/share/raid-integrity-monitor/raid-integrity-monitor.log
+```
+
+Adjust `maxVerificationsPerRun` up or down to fit your preferred daily time budget. If you ever need an immediate full check regardless of schedule, use `--mode verify`.
 
 ---
 
