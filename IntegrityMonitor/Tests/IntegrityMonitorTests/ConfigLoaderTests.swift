@@ -50,7 +50,7 @@ final class ConfigLoaderTests: XCTestCase {
         let config = try ConfigLoader.load(from: url)
         XCTAssertEqual(config.watchPaths, [watchDir()])
         XCTAssertEqual(config.hashAlgorithm, "sha256")       // default
-        XCTAssertEqual(config.verificationIntervalDays, 30)  // default
+        XCTAssertEqual(config.schedule.verificationIntervalDays, 30)  // default
         XCTAssertEqual(config.performance.maxHashThreads, 2) // default
     }
 
@@ -110,7 +110,7 @@ final class ConfigLoaderTests: XCTestCase {
         """)
         let config = try ConfigLoader.load(from: url)
         XCTAssertEqual(config.hashAlgorithm, "sha256")
-        XCTAssertEqual(config.verificationIntervalDays, 30)
+        XCTAssertEqual(config.schedule.verificationIntervalDays, 30)
         XCTAssertEqual(config.performance.maxHashThreads, 2)
         XCTAssertEqual(config.performance.dbBatchSize, 500)
         XCTAssertEqual(config.performance.maxVerificationsPerRun, 1000)

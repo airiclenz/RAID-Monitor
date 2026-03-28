@@ -10,7 +10,6 @@ public struct Config: Codable {
 	public var watchPaths: [String]
 	public var exclude: ExclusionConfig
 	public var hashAlgorithm: String
-	public var verificationIntervalDays: Int
 	public var database: DatabaseConfig
 	public var notifications: NotificationConfig
 	public var performance: PerformanceConfig
@@ -23,7 +22,6 @@ public struct Config: Codable {
 		watchPaths: [String] = [],
 		exclude: ExclusionConfig = ExclusionConfig(),
 		hashAlgorithm: String = "sha256",
-		verificationIntervalDays: Int = 30,
 		database: DatabaseConfig = DatabaseConfig(),
 		notifications: NotificationConfig = NotificationConfig(),
 		performance: PerformanceConfig = PerformanceConfig(),
@@ -34,7 +32,6 @@ public struct Config: Codable {
 		self.watchPaths = watchPaths
 		self.exclude = exclude
 		self.hashAlgorithm = hashAlgorithm
-		self.verificationIntervalDays = verificationIntervalDays
 		self.database = database
 		self.notifications = notifications
 		self.performance = performance
@@ -50,7 +47,6 @@ public struct Config: Codable {
 		watchPaths			  = try container.decode([String].self, forKey: .watchPaths)
 		exclude				  = try container.decodeIfPresent(ExclusionConfig.self,	   forKey: .exclude)			   ?? ExclusionConfig()
 		hashAlgorithm		  = try container.decodeIfPresent(String.self,			   forKey: .hashAlgorithm)		   ?? "sha256"
-		verificationIntervalDays = try container.decodeIfPresent(Int.self,			   forKey: .verificationIntervalDays) ?? 30
 		database			  = try container.decodeIfPresent(DatabaseConfig.self,	   forKey: .database)			   ?? DatabaseConfig()
 		notifications		  = try container.decodeIfPresent(NotificationConfig.self, forKey: .notifications)		   ?? NotificationConfig()
 		performance			  = try container.decodeIfPresent(PerformanceConfig.self,  forKey: .performance)		   ?? PerformanceConfig()
@@ -194,21 +190,25 @@ public struct LoggingConfig: Codable {
 public struct ScheduleConfig: Codable {
 	public var raidCheckIntervalMinutes: Int
 	public var fileScanIntervalHours: Int
+	public var verificationIntervalDays: Int
 
 	// ============================================================================
 	public init(
 		raidCheckIntervalMinutes: Int = 5,
-		fileScanIntervalHours: Int = 24
+		fileScanIntervalHours: Int = 24,
+		verificationIntervalDays: Int = 30
 	) {
 		self.raidCheckIntervalMinutes = raidCheckIntervalMinutes
 		self.fileScanIntervalHours = fileScanIntervalHours
+		self.verificationIntervalDays = verificationIntervalDays
 	}
 
 	// ============================================================================
 	public init(from decoder: Decoder) throws {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
-		raidCheckIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .raidCheckIntervalMinutes) ?? 5
-		fileScanIntervalHours	 = try container.decodeIfPresent(Int.self, forKey: .fileScanIntervalHours)	  ?? 24
+		raidCheckIntervalMinutes  = try container.decodeIfPresent(Int.self, forKey: .raidCheckIntervalMinutes)  ?? 5
+		fileScanIntervalHours	  = try container.decodeIfPresent(Int.self, forKey: .fileScanIntervalHours)	   ?? 24
+		verificationIntervalDays  = try container.decodeIfPresent(Int.self, forKey: .verificationIntervalDays)  ?? 30
 	}
 }
 
@@ -319,8 +319,8 @@ public struct ConfigLoader {
 		if config.performance.maxHashThreads < 1 {
 			throw AppError.configValidation("performance.maxHashThreads must be >= 1")
 		}
-		if config.verificationIntervalDays < 1 {
-			throw AppError.configValidation("verificationIntervalDays must be >= 1")
+		if config.schedule.verificationIntervalDays < 1 {
+			throw AppError.configValidation("schedule.verificationIntervalDays must be >= 1")
 		}
 		if config.performance.dbBatchSize < 1 {
 			throw AppError.configValidation("performance.dbBatchSize must be >= 1")

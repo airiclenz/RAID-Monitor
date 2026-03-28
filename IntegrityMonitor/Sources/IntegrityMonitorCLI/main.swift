@@ -116,6 +116,17 @@ func run() async throws -> Int32 {
 		return 1
 	}
 
+	// Acquire process lock for modes that modify state
+	let exclusiveModes: Set<String> = ["scheduled", "scan", "scan-files", "scan-raid", "upgrade-hash"]
+	let processLock = ProcessLock(directory: configURL.deletingLastPathComponent())
+	if exclusiveModes.contains(mode) {
+		if let reason = processLock.tryAcquire() {
+			fputs("\(reason). Exiting.\n", stderr)
+			return 1
+		}
+	}
+	defer { processLock.release() }
+
 	// Build shared dependencies
 	let logger = Logger(
 		path: config.logging.resolvedLogPath,
@@ -454,19 +465,19 @@ func printScanReport(_ scan: ScanResult) {
 
 	print("""
 	Last scan report
-	────────────────
-	Started	  : \(started)
-	Completed : \(completed)
-	Duration  : \(duration)
-	Status	  : \(scan.status.rawValue)
+	─────────────────────────────
+	Started         : \(started)
+	Completed       : \(completed)
+	Duration        : \(duration)
+	Status          : \(scan.status.rawValue)
 
-	Files walked	: \(scan.filesWalked)
-	Files skipped	: \(scan.filesSkipped)
-	Files new		: \(scan.filesNew)
-	Files modified	: \(scan.filesModified)
-	Files verified	: \(scan.filesVerified)
+	Files walked    : \(scan.filesWalked)
+	Files skipped   : \(scan.filesSkipped)
+	Files new       : \(scan.filesNew)
+	Files modified  : \(scan.filesModified)
+	Files verified  : \(scan.filesVerified)
 	Files corrupted : \(scan.filesCorrupted) \(scan.filesCorrupted > 0 ? "⚠" : "")
-	Files missing	: \(scan.filesMissing) \(scan.filesMissing > 0 ? "⚠" : "")
+	Files missing   : \(scan.filesMissing) \(scan.filesMissing > 0 ? "⚠" : "")
 	""")
 }
 

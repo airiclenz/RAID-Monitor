@@ -158,7 +158,7 @@ public actor FileScanner {
 		onProgress?("")	 // end progress block
 
 		// Phase 3: rolling re-verification
-		let verificationCutoff = Date().addingTimeInterval(-Double(config.verificationIntervalDays) * 86400)
+		let verificationCutoff = Date().addingTimeInterval(-Double(config.schedule.verificationIntervalDays) * 86400)
 		let toVerify = try store.filesToVerify(
 			before: verificationCutoff,
 			limit: config.performance.maxVerificationsPerRun

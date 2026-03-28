@@ -24,8 +24,6 @@
 
   "hashAlgorithm": "sha256",
 
-  "verificationIntervalDays": 30,
-
   "database": {
     "primary": "~/.local/share/raid-integrity-monitor/manifest.db",
     "replica": null
@@ -58,6 +56,7 @@
 
   "schedule": {
     "raidCheckIntervalMinutes": 5,
-    "fileScanIntervalHours": 24
+    "fileScanIntervalHours": 24,
+    "verificationIntervalDays": 30
   }
 }

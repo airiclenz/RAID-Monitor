@@ -77,15 +77,15 @@ Open **System Settings → Privacy & Security → Full Disk Access** and add:
 ~/bin/raid-integrity-monitor
 ```
 
-### 4. Build the baseline manifest
+### 4. Run the initial scan
 
-On first run, index your files without triggering new-file alerts:
+On first run, scan your files to build the baseline manifest:
 
 ```sh
-raid-integrity-monitor --mode init
+raid-integrity-monitor --mode scan
 ```
 
-This may take a while depending on the number of files. Progress is written to the log.
+This may take a while depending on the number of files. Progress is displayed in the terminal.
 
 ### 5. Verify the setup
 
@@ -165,14 +165,6 @@ Pattern matching is case-insensitive (appropriate for HFS+). Standard glob synta
 ```
 
 Currently only `sha256` is supported. The algorithm name is stored alongside every hash, so future migration to a stronger algorithm is possible via `--mode upgrade-hash`.
-
-#### Verification interval
-
-```json
-"verificationIntervalDays": 30
-```
-
-How often each file is re-verified. With the default of 30, every file in your library is re-hashed at least once a month, spread evenly across daily scans.
 
 #### Database
 
@@ -264,7 +256,8 @@ Look for `DevNode` entries like `disk8s2` — the parent disk is `disk8`.
 ```json
 "schedule": {
   "raidCheckIntervalMinutes": 5,
-  "fileScanIntervalHours": 24
+  "fileScanIntervalHours": 24,
+  "verificationIntervalDays": 30
 }
 ```
 
@@ -272,6 +265,7 @@ Look for `DevNode` entries like `disk8s2` — the parent disk is `disk8`.
 |---|---|---|
 | `raidCheckIntervalMinutes` | `5` | How often the LaunchAgent runs and checks RAID health. Also controls how quickly a degraded array is detected. |
 | `fileScanIntervalHours` | `24` | Minimum hours between file integrity scans. The binary checks the last completed scan timestamp and only runs file phases when this interval has elapsed. |
+| `verificationIntervalDays` | `30` | How often each file is re-verified. Every file in your library is re-hashed at least once per interval, spread evenly across scans. |
 
 The LaunchAgent runs every `raidCheckIntervalMinutes`. Each invocation always performs a RAID health check (fast — just `diskutil` calls). File integrity scanning (directory walk, hashing, re-verification) only runs when `fileScanIntervalHours` has elapsed since the last completed scan. This gives you frequent RAID monitoring without redundant file hashing.
 
@@ -290,10 +284,9 @@ raid-integrity-monitor --mode <mode>
 | Mode | Description |
 |---|---|
 | `scheduled` | LaunchAgent mode (default): always runs RAID check, runs file scan only when `fileScanIntervalHours` has elapsed since the last scan |
-| `scan` | Full scan: RAID check + file integrity — runs everything immediately regardless of schedule |
+| `scan` | Full scan: RAID check + file integrity — runs everything immediately regardless of schedule. New files are indexed automatically. |
 | `scan-files` | File integrity only — no RAID check |
 | `scan-raid` | RAID health check only — prints current array status |
-| `init` | Build the baseline manifest on first install. Indexes all files without firing new-file alerts. Run once before the first `scan`. |
 | `report` | Print a summary of the last scan |
 | `test` | Verify the setup and send a test notification |
 | `upgrade-hash` | Migrate all stored hashes to a new algorithm: `--from sha256 --to <new>` |
