@@ -132,7 +132,8 @@ func run() async throws -> Int32 {
 	let logger = Logger(
 		path: config.logging.resolvedLogPath,
 		level: Logger.Level.from(string: config.logging.level),
-		maxBytes: config.logging.maxLogSizeBytes
+		maxBytes: config.logging.maxLogSizeBytes,
+		localTimestamps: config.logging.localTimestamps
 	)
 
 	let primaryStore = SQLiteManifestStore(
@@ -198,14 +199,20 @@ func run() async throws -> Int32 {
 			)
 			let (_, raidAlerts) = try raidScanner.scan()
 			for alert in raidAlerts {
-				alertManager.sendIfEnabled(raidAlert: alert)
-				let eventType = alert.title.contains("Failed") ? ScanEvent.raidFailed : ScanEvent.raidDegraded
-				try store.logEvent(
-					ScanEvent(
+				if alert.title.contains("Unavailable") {
+					alertManager.sendIfEnabled(raidUnavailable: alert)
+					try store.logEvent(ScanEvent(
+						eventType: ScanEvent.raidDisappeared,
+						detail: alert.body
+					))
+				} else {
+					alertManager.sendIfEnabled(raidAlert: alert)
+					let eventType = alert.title.contains("Failed") ? ScanEvent.raidFailed : ScanEvent.raidDegraded
+					try store.logEvent(ScanEvent(
 						eventType: eventType,
 						detail: alert.body
-					)
-				)
+					))
+				}
 			}
 		}
 
@@ -296,7 +303,11 @@ func run() async throws -> Int32 {
 			}
 		}
 		for alert in alerts {
-			alertManager.sendIfEnabled(raidAlert: alert)
+			if alert.title.contains("Unavailable") {
+				alertManager.sendIfEnabled(raidUnavailable: alert)
+			} else {
+				alertManager.sendIfEnabled(raidAlert: alert)
+			}
 		}
 
 	case "verify":
@@ -466,6 +477,10 @@ func runTestMode(
 		body: "Setup verified successfully. raid-integrity-monitor is ready.",
 		severity: .info
 	))
+	// Give the notification helper time to deliver the banner before we exit.
+	// The helper runs as a separate process; without this pause the main
+	// process can exit before the notification is shown.
+	Thread.sleep(forTimeInterval: 3)
 	print("✓ Test notification sent (check Notification Centre if no banner appears)")
 	print("\nNote: If notifications don't appear, grant Full Disk Access and Notifications")
 	print("permission in System Settings → Privacy & Security.")

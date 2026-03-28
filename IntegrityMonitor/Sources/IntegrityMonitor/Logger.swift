@@ -58,14 +58,15 @@ public final class Logger: @unchecked Sendable {
 	public init(
 		path: URL,
 		level: Level = .info,
-		maxBytes: Int = 10 * 1024 * 1024
+		maxBytes: Int = 10 * 1024 * 1024,
+		localTimestamps: Bool = false
 	) {
 		self.path = path
 		self.minimumLevel = level
 		self.maxBytes = maxBytes
 		self.formatter = ISO8601DateFormatter()
 		self.formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-		self.formatter.timeZone = TimeZone(identifier: "UTC")
+		self.formatter.timeZone = localTimestamps ? TimeZone.current : TimeZone(identifier: "UTC")!
 	}
 
 	// MARK: - Public interface

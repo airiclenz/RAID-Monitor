@@ -32,7 +32,9 @@
   "notifications": {
     "onCorruption": true,
     "onRAIDDegraded": true,
+    "onRAIDUnavailable": true,
     "onMissingFile": false,
+    "onVolumeUnavailable": true,
     "onScanComplete": false,
     "onScanCompleteWithIssues": true
   },
@@ -47,6 +49,7 @@
   "logging": {
     "logPath": "~/.local/share/raid-integrity-monitor/raid-integrity-monitor.log",
     "level": "info",
+    "localTimestamps": true,
     "maxLogSizeBytes": 10485760
   },
 

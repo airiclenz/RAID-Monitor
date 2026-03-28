@@ -168,12 +168,20 @@ public actor FileScanner {
 		logger.info("Phase 0: RAID health check")
 		let (_, alerts) = try raidScanner.scan()
 		for alert in alerts {
-			alertManager.sendIfEnabled(raidAlert: alert)
-			let eventType = alert.title.contains("Failed") ? ScanEvent.raidFailed : ScanEvent.raidDegraded
-			try store.logEvent(ScanEvent(
-				eventType: eventType,
-				detail: alert.body
-			))
+			if alert.title.contains("Unavailable") {
+				alertManager.sendIfEnabled(raidUnavailable: alert)
+				try store.logEvent(ScanEvent(
+					eventType: ScanEvent.raidDisappeared,
+					detail: alert.body
+				))
+			} else {
+				alertManager.sendIfEnabled(raidAlert: alert)
+				let eventType = alert.title.contains("Failed") ? ScanEvent.raidFailed : ScanEvent.raidDegraded
+				try store.logEvent(ScanEvent(
+					eventType: eventType,
+					detail: alert.body
+				))
+			}
 		}
 	}
 
@@ -246,6 +254,12 @@ public actor FileScanner {
 				isDirectory: &isDir
 			), isDir.boolValue else {
 				logger.warn("Watch path inaccessible (volume may be unmounted): \(watchURL.path)")
+				alertManager.sendIfEnabled(volumeUnavailable: Alert(
+					title: "Volume Unavailable",
+					subtitle: (watchURL.path as NSString).lastPathComponent,
+					body: "Watch path is not accessible (volume may be unmounted):\n\(watchURL.path)",
+					severity: .warning
+				))
 				continue
 			}
 			walkedPrefixes.insert(watchURL.path)

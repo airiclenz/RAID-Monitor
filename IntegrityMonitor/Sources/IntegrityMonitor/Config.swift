@@ -106,7 +106,9 @@ public struct NotificationConfig: Codable {
 	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 	public var onCorruption: Bool
 	public var onRAIDDegraded: Bool
+	public var onRAIDUnavailable: Bool
 	public var onMissingFile: Bool
+	public var onVolumeUnavailable: Bool
 	public var onScanComplete: Bool
 	public var onScanCompleteWithIssues: Bool
 
@@ -114,13 +116,17 @@ public struct NotificationConfig: Codable {
 	public init(
 		onCorruption: Bool = true,
 		onRAIDDegraded: Bool = true,
+		onRAIDUnavailable: Bool = true,
 		onMissingFile: Bool = false,
+		onVolumeUnavailable: Bool = true,
 		onScanComplete: Bool = false,
 		onScanCompleteWithIssues: Bool = true
 	) {
 		self.onCorruption = onCorruption
 		self.onRAIDDegraded = onRAIDDegraded
+		self.onRAIDUnavailable = onRAIDUnavailable
 		self.onMissingFile = onMissingFile
+		self.onVolumeUnavailable = onVolumeUnavailable
 		self.onScanComplete = onScanComplete
 		self.onScanCompleteWithIssues = onScanCompleteWithIssues
 	}
@@ -130,7 +136,9 @@ public struct NotificationConfig: Codable {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
 		onCorruption			 = try container.decodeIfPresent(Bool.self, forKey: .onCorruption)			   ?? true
 		onRAIDDegraded			 = try container.decodeIfPresent(Bool.self, forKey: .onRAIDDegraded)		   ?? true
+		onRAIDUnavailable		 = try container.decodeIfPresent(Bool.self, forKey: .onRAIDUnavailable)	   ?? true
 		onMissingFile			 = try container.decodeIfPresent(Bool.self, forKey: .onMissingFile)			   ?? false
+		onVolumeUnavailable		 = try container.decodeIfPresent(Bool.self, forKey: .onVolumeUnavailable)	   ?? true
 		onScanComplete			 = try container.decodeIfPresent(Bool.self, forKey: .onScanComplete)		   ?? false
 		onScanCompleteWithIssues = try container.decodeIfPresent(Bool.self, forKey: .onScanCompleteWithIssues) ?? true
 	}
@@ -168,6 +176,8 @@ public struct PerformanceConfig: Codable {
 public struct LoggingConfig: Codable {
 	public var logPath: String
 	public var level: String
+	public var localTimestamps: Bool
+
 	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 	public var maxLogSizeBytes: Int
 
@@ -175,19 +185,22 @@ public struct LoggingConfig: Codable {
 	public init(
 		logPath: String = "~/.local/share/raid-integrity-monitor/raid-integrity-monitor.log",
 		level: String = "info",
+		localTimestamps: Bool = false,
 		maxLogSizeBytes: Int = 10 * 1024 * 1024
 	) {
 		self.logPath = logPath
 		self.level = level
+		self.localTimestamps = localTimestamps
 		self.maxLogSizeBytes = maxLogSizeBytes
 	}
 
 	// ============================================================================
 	public init(from decoder: Decoder) throws {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
-		logPath			= try container.decodeIfPresent(String.self, forKey: .logPath)		   ?? "~/.local/share/raid-integrity-monitor/raid-integrity-monitor.log"
-		level			= try container.decodeIfPresent(String.self, forKey: .level)		   ?? "info"
-		maxLogSizeBytes = try container.decodeIfPresent(Int.self,	 forKey: .maxLogSizeBytes) ?? (10 * 1024 * 1024)
+		logPath			 = try container.decodeIfPresent(String.self, forKey: .logPath)		      ?? "~/.local/share/raid-integrity-monitor/raid-integrity-monitor.log"
+		level			 = try container.decodeIfPresent(String.self, forKey: .level)		      ?? "info"
+		localTimestamps  = try container.decodeIfPresent(Bool.self,   forKey: .localTimestamps)    ?? false
+		maxLogSizeBytes  = try container.decodeIfPresent(Int.self,	  forKey: .maxLogSizeBytes)    ?? (10 * 1024 * 1024)
 	}
 }
 
@@ -309,6 +322,7 @@ public struct ConfigLoader {
 		if config.watchPaths.isEmpty {
 			throw AppError.configValidation("watchPaths must not be empty")
 		}
+		var accessibleCount = 0
 		for rawPath in config.watchPaths {
 			let expanded = (rawPath as NSString).expandingTildeInPath
 			var isDir: ObjCBool = false
@@ -317,8 +331,18 @@ public struct ConfigLoader {
 				isDirectory: &isDir
 			)
 			if !exists || !isDir.boolValue {
-				throw AppError.configValidation("watchPath does not exist or is not a directory: \(expanded)")
+				// Warn but do not abort — the volume may be temporarily
+				// unmounted (e.g. external RAID enclosure powered off).
+				// Phase 1 will skip inaccessible paths at scan time.
+				fputs("Warning: watchPath not currently accessible: \(expanded)\n", stderr)
+			} else {
+				accessibleCount += 1
 			}
+		}
+		if accessibleCount == 0 {
+			throw AppError.configValidation(
+				"No watchPaths are currently accessible. At least one must be reachable."
+			)
 		}
 		if config.performance.maxHashThreads < 1 {
 			throw AppError.configValidation("performance.maxHashThreads must be >= 1")

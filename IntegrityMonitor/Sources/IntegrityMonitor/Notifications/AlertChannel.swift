@@ -102,8 +102,20 @@ public struct AlertManager {
 	}
 
 	// ============================================================================
+	public func sendIfEnabled(raidUnavailable alert: Alert) {
+		guard config.onRAIDUnavailable else { return }
+		send(alert)
+	}
+
+	// ============================================================================
 	public func sendIfEnabled(missingFile alert: Alert) {
 		guard config.onMissingFile else { return }
+		send(alert)
+	}
+
+	// ============================================================================
+	public func sendIfEnabled(volumeUnavailable alert: Alert) {
+		guard config.onVolumeUnavailable else { return }
 		send(alert)
 	}
 

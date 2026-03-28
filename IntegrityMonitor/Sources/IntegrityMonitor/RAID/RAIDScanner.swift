@@ -40,9 +40,16 @@ public struct RAIDScanner {
 		var arrays = RAIDOutputParser.parse(output)
 
 		if arrays.isEmpty {
-			logger.info("No AppleRAID sets found")
+			logger.warn("No Apple-RAID sets found — array may be unavailable")
+			let unavailableAlert = Alert(
+				title: "RAID Array Unavailable",
+				subtitle: "No arrays detected",
+				body: "diskutil appleRAID list returned no arrays. The RAID enclosure may be powered off or disconnected.",
+				severity: .warning
+			)
+			return ([], [unavailableAlert])
 		} else {
-			logger.info("Found \(arrays.count) AppleRAID set(s)")
+			logger.info("Found \(arrays.count) Apple-RAID set(s)")
 		}
 
 		// SMART check for configured member disks
