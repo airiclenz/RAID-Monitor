@@ -195,12 +195,18 @@ sed -e "s|APP_VERSION|${APP_VERSION}|g" "$SRC_NOTIFY_PLIST" > "$DEST_NOTIFY_INFO
     || die "Failed to write ${DEST_NOTIFY_INFOPLIST}"
 ok "Info.plist: $(short "$DEST_NOTIFY_INFOPLIST")"
 
-# App icon (optional — place AppIcon.png in the project root directory)
+# App icon (optional — place AppIcon.icns or AppIcon.png in the project root)
+SRC_ICON_ICNS="${SCRIPT_DIR}/../AppIcon.icns"
 SRC_ICON_PNG="${SCRIPT_DIR}/../AppIcon.png"
 DEST_RESOURCES="${DEST_NOTIFY_APP}/Contents/Resources"
 DEST_ICNS="${DEST_RESOURCES}/AppIcon.icns"
 
-if [[ -f "$SRC_ICON_PNG" ]]; then
+if [[ -f "$SRC_ICON_ICNS" ]]; then
+    step "Copying AppIcon.icns"
+    mkdir -p "$DEST_RESOURCES"
+    cp "$SRC_ICON_ICNS" "$DEST_ICNS" || die "Failed to copy AppIcon.icns"
+    ok "Icon installed: $(short "$DEST_ICNS")"
+elif [[ -f "$SRC_ICON_PNG" ]]; then
     step "Converting AppIcon.png → AppIcon.icns"
     mkdir -p "$DEST_RESOURCES"
 
@@ -223,7 +229,7 @@ if [[ -f "$SRC_ICON_PNG" ]]; then
     rm -rf "$tmp_dir"
     ok "Icon installed: $(short "$DEST_ICNS")"
 else
-    info "No AppIcon.png found — skipping icon"
+    info "No AppIcon.icns or AppIcon.png found — skipping icon"
 fi
 
 # Sign and register the app bundle
