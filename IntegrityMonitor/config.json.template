@@ -40,7 +40,7 @@
   "performance": {
     "maxHashThreads": 2,
     "dbBatchSize": 500,
-    "maxVerificationsPerRun": 1000
+    "maxVerificationsPerRun": 25000
   },
 
   "logging": {
@@ -57,6 +57,6 @@
   "schedule": {
     "raidCheckIntervalMinutes": 5,
     "fileScanIntervalHours": 24,
-    "verificationIntervalDays": 30
+    "verificationIntervalDays": 60
   }
 }
