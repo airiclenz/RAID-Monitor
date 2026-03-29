@@ -44,7 +44,7 @@ public struct VolumeDetector {
 
 		for watchURL in watchPaths {
 			guard let (devID, mountPoint) = resolveVolume(for: watchURL.path) else {
-				logger.warn("Cannot determine volume for \(Logger.c(watchURL.path, .dim))")
+				logger.warn("Cannot determine volume for \(Logger.c(watchURL.path, .cyan))")
 				continue
 			}
 
@@ -65,7 +65,7 @@ public struct VolumeDetector {
 			} else {
 				diskType = "unknown"
 			}
-			logger.info("Volume \(Logger.c(mountPoint, .dim)): \(diskType), \(Logger.c("\(threads)", .boldWhite)) hash thread(s)")
+			logger.info("Volume \(Logger.c(mountPoint, .cyan)): \(diskType), \(Logger.c("\(threads)", .boldWhite)) hash thread(s)")
 
 			result[devID] = VolumeInfo(
 				mountPoint: mountPoint,

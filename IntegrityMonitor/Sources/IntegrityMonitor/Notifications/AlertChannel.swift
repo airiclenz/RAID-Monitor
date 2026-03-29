@@ -31,7 +31,7 @@ public struct MacOSAlertChannel: AlertChannel {
 	// ============================================================================
 	public func send(_ alert: Alert) {
 		guard FileManager.default.isExecutableFile(atPath: notifyBinaryPath) else {
-			logger.warn("Notification helper not found or not executable: \(Logger.c(notifyBinaryPath, .dim))")
+			logger.warn("Notification helper not found or not executable: \(Logger.c(notifyBinaryPath, .cyan))")
 			return
 		}
 

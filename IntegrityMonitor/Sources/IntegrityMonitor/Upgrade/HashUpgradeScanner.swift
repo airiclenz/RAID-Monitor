@@ -38,7 +38,7 @@ public struct HashUpgradeScanner {
 	private let onProgress: ProgressHandler?
 
 	/// Files above this size get per-file byte progress in the progress line.
-	private let largeFileThreshold: Int64 = 100 * 1024 * 1024
+	private let largeFileThreshold: Int64 = 30 * 1024 * 1024
 
 	/// Per-volume concurrency info, keyed by device ID.
 	private let volumeMap: [dev_t: VolumeInfo]
@@ -189,7 +189,7 @@ public struct HashUpgradeScanner {
 				case .corrupted(let corruptedRecord, let storedPrefix, let computedPrefix):
 					try store.upsert(corruptedRecord)
 					result.corrupted += 1
-					logger.error("\(Logger.c("CORRUPTION DETECTED", .boldRed)) during hash upgrade: \(Logger.c(corruptedRecord.path, .dim))")
+					logger.error("\(Logger.c("CORRUPTION DETECTED", .boldRed)) during hash upgrade: \(Logger.c(corruptedRecord.path, .cyan))")
 					try store.logEvent(ScanEvent(
 						eventType: ScanEvent.fileCorrupted,
 						path: corruptedRecord.path,
@@ -278,7 +278,7 @@ public struct HashUpgradeScanner {
 			do {
 				handle = try FileHandle(forReadingFrom: url)
 			} catch {
-				logger.warn("Cannot read \(Logger.c(record.path, .dim)): \(error) — skipping")
+				logger.warn("Cannot read \(Logger.c(record.path, .cyan)): \(error) — skipping")
 				return .skipped(path: record.path)
 			}
 			defer { try? handle.close() }
@@ -307,7 +307,7 @@ public struct HashUpgradeScanner {
 				do {
 					chunk = try handle.read(upToCount: chunkSize) ?? Data()
 				} catch {
-					logger.warn("Cannot read \(Logger.c(record.path, .dim)): \(error) — skipping")
+					logger.warn("Cannot read \(Logger.c(record.path, .cyan)): \(error) — skipping")
 					return .skipped(path: record.path)
 				}
 				if chunk.isEmpty { break }
@@ -390,7 +390,7 @@ public struct HashUpgradeScanner {
 			completed: completed,
 			total: total
 		)
-		onProgress("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta) — \(fileName)")
+		onProgress("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta) — \(Logger.c(fileName, .cyan))")
 	}
 
 	// ============================================================================
@@ -422,7 +422,7 @@ public struct HashUpgradeScanner {
 
 		return { bytesHashed, totalSize in
 			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
-			onProg("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(fileName) (\(Logger.c("\(filePct)%", .yellow)))")
+			onProg("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(Logger.c(fileName, .cyan)) (\(Logger.c("\(filePct)%", .yellow)))")
 		}
 	}
 

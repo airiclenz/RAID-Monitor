@@ -46,7 +46,7 @@ public actor FileScanner {
 	private let onProgress: ProgressHandler?
 
 	/// Files above this size get per-file byte progress in the progress line.
-	private let largeFileThreshold: Int64 = 100 * 1024 * 1024
+	private let largeFileThreshold: Int64 = 30 * 1024 * 1024
 
 	/// Per-volume concurrency info, keyed by device ID.
 	private let volumeMap: [dev_t: VolumeInfo]
@@ -253,7 +253,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				atPath: watchURL.path,
 				isDirectory: &isDir
 			), isDir.boolValue else {
-				logger.warn("Watch path inaccessible (volume may be unmounted): \(Logger.c(watchURL.path, .dim))")
+				logger.warn("Watch path inaccessible (volume may be unmounted): \(Logger.c(watchURL.path, .cyan))")
 				alertManager.sendIfEnabled(volumeUnavailable: Alert(
 					title: "Volume Unavailable",
 					subtitle: (watchURL.path as NSString).lastPathComponent,
@@ -274,11 +274,11 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				],
 				options: [.skipsHiddenFiles],
 				errorHandler: { url, error in
-					self.logger.warn("Cannot access \(Logger.c(url.path, .dim)): \(error.localizedDescription)")
+					self.logger.warn("Cannot access \(Logger.c(url.path, .cyan)): \(error.localizedDescription)")
 					return true	 // continue enumeration
 				}
 			) else {
-				logger.warn("Cannot enumerate \(Logger.c(watchURL.path, .dim))")
+				logger.warn("Cannot enumerate \(Logger.c(watchURL.path, .cyan))")
 				continue
 			}
 
@@ -402,7 +402,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				let fileName = record.map {
 					($0.path as NSString).lastPathComponent
 				} ?? ""
-				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
+				let nameSegment = fileName.isEmpty ? "" : " — \(Logger.c(fileName, .cyan))"
 				onProgress?("Phase 2: Hashing \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta)\(nameSegment)")
 
 				if let fileRecord = record {
@@ -503,7 +503,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				status: status
 			)
 		} catch {
-			logger.warn("Cannot hash \(Logger.c(url.path, .dim)): \(error)")
+			logger.warn("Cannot hash \(Logger.c(url.path, .cyan)): \(error)")
 			return nil
 		}
 	}
@@ -568,7 +568,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				let fileName = verifiedRecord.map {
 					($0.path as NSString).lastPathComponent
 				} ?? ""
-				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
+				let nameSegment = fileName.isEmpty ? "" : " — \(Logger.c(fileName, .cyan))"
 				onProgress?("Phase 3: Verifying \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta)\(nameSegment)")
 
 				if let verifiedResult = verifiedRecord {
@@ -665,11 +665,11 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 			} else {
 				// Mismatch with unchanged mtime/size = bit-rot
 				updated.status = .corrupted
-				logger.error("\(Logger.c("BIT-ROT DETECTED:", .boldRed)) \(Logger.c(record.path, .dim)) (stored: \(Logger.c(String(record.hash.prefix(8)), .yellow))... computed: \(Logger.c(String(computed.prefix(8)), .yellow))...)")
+				logger.error("\(Logger.c("BIT-ROT DETECTED:", .boldRed)) \(Logger.c(record.path, .cyan)) (stored: \(Logger.c(String(record.hash.prefix(8)), .yellow))... computed: \(Logger.c(String(computed.prefix(8)), .yellow))...)")
 			}
 			return updated
 		} catch {
-			logger.warn("Cannot re-verify \(Logger.c(record.path, .dim)): \(error)")
+			logger.warn("Cannot re-verify \(Logger.c(record.path, .cyan)): \(error)")
 			return nil
 		}
 	}
@@ -765,7 +765,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 
 		return { bytesHashed, totalSize in
 			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
-			onProg("\(phaseLabel) \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(fileName) (\(Logger.c("\(filePct)%", .yellow)))")
+			onProg("\(phaseLabel) \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(Logger.c(fileName, .cyan)) (\(Logger.c("\(filePct)%", .yellow)))")
 		}
 	}
 

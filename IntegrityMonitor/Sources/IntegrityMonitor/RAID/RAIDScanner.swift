@@ -61,7 +61,7 @@ public struct RAIDScanner {
 					let parentDisk = parentDisk(from: member.devNode)
 					if config.memberDisks.contains(parentDisk) || config.memberDisks.contains(member.devNode) {
 						updatedMember.smartStatus = checkSMART(disk: parentDisk)
-						logger.info("SMART: \(Logger.c("/dev/\(parentDisk)", .dim)) (\(member.devNode)): \(Logger.c(updatedMember.smartStatus.rawValue, updatedMember.smartStatus.rawValue == "Verified" ? .green : .boldRed))")
+						logger.info("SMART: \(Logger.c("/dev/\(parentDisk)", .cyan)) (\(member.devNode)): \(Logger.c(updatedMember.smartStatus.rawValue, updatedMember.smartStatus.rawValue == "Verified" ? .green : .boldRed))")
 					}
 					return updatedMember
 				}
