@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import CBLAKE3
 
 // ---------------------------------------------------------------------------
 // MARK: - HashUpgradeScanner
@@ -6,19 +8,21 @@ import Foundation
 // Implements the --mode upgrade-hash operation.
 //
 // For every file record using `fromAlgorithm`:
-//	 1. Re-hash with the old algorithm and verify it matches the stored hash.
+//	 1. Read the file once, feeding each chunk to both the old and new hasher.
+//	 2. Compare the old hash to the stored hash.
 //		If it doesn't match → the file is already corrupted. Mark it as
 //		corrupted and skip the upgrade (never assign a "clean" new hash to
 //		a corrupted file).
-//	 2. If it matches → hash with the new algorithm, update the record.
+//	 3. If it matches → update the record with the new hash.
 //
-// It's safe to re-run if interrupted — already-upgraded records are skipped.
+// Single-pass dual hashing halves the I/O compared to hashing twice.
+// It's safe to re-run if interrupted — already-upgraded records are skipped
+// and each record is persisted to the database immediately on completion.
 //
 // Uses per-volume semaphores for concurrent hashing: SSDs get multiple
 // threads, HDDs get 1 — matching the FileScanner Phase 2/3 pattern.
-//
-// Progress is reported exclusively from the single-threaded drain loop
-// (not from concurrent hash callbacks) to guarantee clean, monotonic output.
+// Per-file byte progress is reported from the hash callbacks; overall
+// completion progress is reported from the single-threaded drain loop.
 // ---------------------------------------------------------------------------
 
 public struct HashUpgradeScanner {
@@ -32,6 +36,9 @@ public struct HashUpgradeScanner {
 	private let alertManager: AlertManager
 	private let logger: Logger
 	private let onProgress: ProgressHandler?
+
+	/// Files above this size get per-file byte progress in the progress line.
+	private let largeFileThreshold: Int64 = 100 * 1024 * 1024
 
 	/// Per-volume concurrency info, keyed by device ID.
 	private let volumeMap: [dev_t: VolumeInfo]
@@ -107,12 +114,9 @@ public struct HashUpgradeScanner {
 		from oldAlgorithm: String,
 		to newAlgorithm: String
 	) async throws -> UpgradeResult {
-		let oldHasher = try HasherFactory.make(for: oldAlgorithm)
-		let newHasher = try HasherFactory.make(for: newAlgorithm)
-
-		// Load all candidates. At ~200 bytes per FileRecord, even 100K records is
-		// only ~20 MB. The memory problem was from accumulated Data hashing buffers,
-		// which autoreleasepool in upgradeFile() already fixes.
+		// Check candidates first — if none, return early without needing valid hashers.
+		// This preserves the invariant that an unsupported algorithm name doesn't
+		// throw when there are no records to upgrade.
 		let candidates = try store.records(withAlgorithm: oldAlgorithm)
 		let total = candidates.count
 
@@ -120,6 +124,9 @@ public struct HashUpgradeScanner {
 			logger.info("Hash upgrade: no records with algorithm \(Logger.c("'\(oldAlgorithm)'", .cyan)) — nothing to do")
 			return UpgradeResult()
 		}
+
+		let oldHasher = try HasherFactory.make(for: oldAlgorithm)
+		let newHasher = try HasherFactory.make(for: newAlgorithm)
 
 		logger.info("Hash upgrade: \(Logger.c("\(total)", .boldWhite)) file(s) to upgrade from \(Logger.c(oldAlgorithm, .cyan)) → \(Logger.c(newAlgorithm, .cyan))")
 
@@ -140,13 +147,20 @@ public struct HashUpgradeScanner {
 			// Prime the pool with up to maxThreads initial tasks.
 			while inFlight < maxThreads, let record = iterator.next() {
 				let semaphore = volumeSemaphore(for: record.path)
+				let fileProgress = buildFileProgress(
+					fileURL: URL(fileURLWithPath: record.path),
+					completed: completed,
+					total: total,
+					phaseStart: upgradeStart
+				)
 				group.addTask {
 					await semaphore?.acquire()
 					let fileResult = self.upgradeFile(
 						record: record,
 						oldHasher: oldHasher,
 						newHasher: newHasher,
-						newAlgorithm: newAlgorithm
+						newAlgorithm: newAlgorithm,
+						onProgress: fileProgress
 					)
 					await semaphore?.release()
 					return fileResult
@@ -155,8 +169,8 @@ public struct HashUpgradeScanner {
 			}
 
 			// Drain loop: for each completed task, collect result and add next task.
-			// All progress reporting happens here (single-threaded) to guarantee
-			// clean, monotonically increasing output with no interleaving.
+			// Overall completion progress is reported here (single-threaded) to
+			// guarantee clean, monotonically increasing output.
 			while let fileResult = try await group.next() {
 				inFlight -= 1
 				completed += 1
@@ -207,13 +221,20 @@ public struct HashUpgradeScanner {
 				// Add next task from iterator
 				if let record = iterator.next() {
 					let semaphore = volumeSemaphore(for: record.path)
+					let fileProgress = buildFileProgress(
+						fileURL: URL(fileURLWithPath: record.path),
+						completed: completed,
+						total: total,
+						phaseStart: upgradeStart
+					)
 					group.addTask {
 						await semaphore?.acquire()
 						let fileResult = self.upgradeFile(
 							record: record,
 							oldHasher: oldHasher,
 							newHasher: newHasher,
-							newAlgorithm: newAlgorithm
+							newAlgorithm: newAlgorithm,
+							onProgress: fileProgress
 						)
 						await semaphore?.release()
 						return fileResult
@@ -237,29 +258,94 @@ public struct HashUpgradeScanner {
 	// MARK: - Per-file upgrade (nonisolated for concurrency)
 
 	// ============================================================================
-	/// Perform the verify-then-upgrade work for a single file.
-	/// Runs inside autoreleasepool to contain Foundation memory allocations.
-	/// This is a pure I/O function with no shared mutable state.
+	/// Perform the verify-and-upgrade work for a single file in one pass.
+	///
+	/// Reads the file once, feeding each chunk to both the old and new hasher
+	/// simultaneously. This halves the I/O compared to two separate full reads.
+	/// Wrapped in autoreleasepool to contain Foundation memory allocations
+	/// (FileHandle/Data buffers).
 	nonisolated private func upgradeFile(
 		record: FileRecord,
 		oldHasher: any FileHasher,
 		newHasher: any FileHasher,
-		newAlgorithm: String
+		newAlgorithm: String,
+		onProgress: HashProgressHandler?
 	) -> FileUpgradeResult {
 		autoreleasepool {
 			let url = URL(fileURLWithPath: record.path)
 
-			// Step 1: Verify the old hash
-			let oldHash: String
+			let handle: FileHandle
 			do {
-				oldHash = try oldHasher.hash(fileAt: url, onProgress: nil)
+				handle = try FileHandle(forReadingFrom: url)
 			} catch {
 				logger.warn("Cannot read \(Logger.c(record.path, .dim)): \(error) — skipping")
 				return .skipped(path: record.path)
 			}
+			defer { try? handle.close() }
 
+			let totalSize = Int64(
+				(try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+			)
+			let chunkSize = 4 * 1024 * 1024
+			var bytesProcessed: Int64 = 0
+
+			// Prepare both hashers for streaming
+			var oldSHA = CryptoKit.SHA256()
+			var oldBLAKE3State = blake3_hasher()
+			let oldIsSHA256 = (oldHasher.algorithmName == "sha256")
+
+			var newSHA = CryptoKit.SHA256()
+			var newBLAKE3State = blake3_hasher()
+			let newIsSHA256 = (newHasher.algorithmName == "sha256")
+
+			if !oldIsSHA256 { blake3_hasher_init(&oldBLAKE3State) }
+			if !newIsSHA256 { blake3_hasher_init(&newBLAKE3State) }
+
+			// Single-pass: read each chunk once, feed to both hashers
+			while true {
+				let chunk: Data
+				do {
+					chunk = try handle.read(upToCount: chunkSize) ?? Data()
+				} catch {
+					logger.warn("Cannot read \(Logger.c(record.path, .dim)): \(error) — skipping")
+					return .skipped(path: record.path)
+				}
+				if chunk.isEmpty { break }
+
+				// Feed old hasher
+				if oldIsSHA256 {
+					oldSHA.update(data: chunk)
+				} else {
+					chunk.withUnsafeBytes { buf in
+						blake3_hasher_update(&oldBLAKE3State, buf.baseAddress, buf.count)
+					}
+				}
+
+				// Feed new hasher
+				if newIsSHA256 {
+					newSHA.update(data: chunk)
+				} else {
+					chunk.withUnsafeBytes { buf in
+						blake3_hasher_update(&newBLAKE3State, buf.baseAddress, buf.count)
+					}
+				}
+
+				bytesProcessed += Int64(chunk.count)
+				onProgress?(bytesProcessed, totalSize)
+			}
+
+			// Finalize old hash
+			let oldHash: String
+			if oldIsSHA256 {
+				oldHash = oldSHA.finalize().map { String(format: "%02x", $0) }.joined()
+			} else {
+				var output = [UInt8](repeating: 0, count: Int(BLAKE3_OUT_LEN))
+				blake3_hasher_finalize(&oldBLAKE3State, &output, Int(BLAKE3_OUT_LEN))
+				oldHash = output.map { String(format: "%02x", $0) }.joined()
+			}
+
+			// Verify old hash
 			if oldHash != record.hash {
-				// Corruption detected — do NOT assign new hash.
 				var corruptedRecord = record
 				corruptedRecord.status = .corrupted
 				return .corrupted(
@@ -269,13 +355,14 @@ public struct HashUpgradeScanner {
 				)
 			}
 
-			// Step 2: Hash with new algorithm
+			// Finalize new hash
 			let newHash: String
-			do {
-				newHash = try newHasher.hash(fileAt: url, onProgress: nil)
-			} catch {
-				logger.warn("Cannot hash \(Logger.c(record.path, .dim)) with \(Logger.c(newAlgorithm, .cyan)): \(error) — skipping")
-				return .skipped(path: record.path)
+			if newIsSHA256 {
+				newHash = newSHA.finalize().map { String(format: "%02x", $0) }.joined()
+			} else {
+				var output = [UInt8](repeating: 0, count: Int(BLAKE3_OUT_LEN))
+				blake3_hasher_finalize(&newBLAKE3State, &output, Int(BLAKE3_OUT_LEN))
+				newHash = output.map { String(format: "%02x", $0) }.joined()
 			}
 
 			var upgradedRecord = record
@@ -304,6 +391,39 @@ public struct HashUpgradeScanner {
 			total: total
 		)
 		onProgress("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta) — \(fileName)")
+	}
+
+	// ============================================================================
+	/// Build a per-file progress callback for large files.
+	/// For files below the threshold, returns nil (no per-chunk progress).
+	/// Captures `completed` by value (frozen at dispatch time) — identical to
+	/// FileScanner's pattern. The counter stays fixed while the file hashes,
+	/// which looks "paused" rather than "jumping" between concurrent files.
+	private func buildFileProgress(
+		fileURL: URL,
+		completed: Int,
+		total: Int,
+		phaseStart: Date
+	) -> HashProgressHandler? {
+		let fileSize = Int64(
+			(try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+		)
+		guard fileSize > largeFileThreshold, let onProg = onProgress else {
+			return nil
+		}
+
+		let fileName = fileURL.lastPathComponent
+		let overallPct = total > 0 ? (completed * 100) / total : 0
+		let eta = formatETA(
+			started: phaseStart,
+			completed: completed,
+			total: total
+		)
+
+		return { bytesHashed, totalSize in
+			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
+			onProg("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(fileName) (\(Logger.c("\(filePct)%", .yellow)))")
+		}
 	}
 
 	// ============================================================================
