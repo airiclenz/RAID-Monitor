@@ -12,7 +12,7 @@ Each night, RAID Integrity Monitor performs a four-phase scan:
 
 1. **RAID health check** — queries `diskutil appleRAID list` for array and member status
 2. **Directory walk** — crawls your watch paths and classifies every file as new, modified, or stable
-3. **Hash new and modified files** — computes SHA-256 for any file whose size or modification date changed
+3. **Hash new and modified files** — computes a cryptographic hash (SHA-256 or BLAKE3) for any file whose size or modification date changed
 4. **Rolling re-verification** — gradually re-hashes previously seen stable files, cycling through the full library every 30 days (configurable)
 
 A **hash mismatch on a stable file** — where the modification date and size have not changed — is the primary corruption signal. Bit-rot corrupts data blocks on disk but leaves filesystem metadata (mtime, size) untouched, so the filesystem itself never reports a problem. By re-hashing and comparing against the stored hash, RAID Integrity Monitor catches corruption that would otherwise go unnoticed until you try to open the file.
@@ -164,7 +164,22 @@ Pattern matching is case-insensitive (appropriate for HFS+). Standard glob synta
 "hashAlgorithm": "sha256"
 ```
 
-Currently only `sha256` is supported. The algorithm name is stored alongside every hash, so future migration to a stronger algorithm is possible via `--mode upgrade-hash`.
+Two algorithms are supported:
+
+| Algorithm | Implementation | Pros | Cons |
+|---|---|---|---|
+| `sha256` (default) | Apple CryptoKit | Hardware-accelerated on Apple Silicon; zero dependencies; universally recognised | Slower than BLAKE3 in pure software |
+| `blake3` | Vendored C reference with ARM NEON | ~2-3x faster than SHA-256 on Apple Silicon; designed for parallel hashing | Not a system framework; vendored C code must be maintained |
+
+Both produce 256-bit (32-byte) digests. The algorithm name is stored alongside every hash in the database, so records from different algorithms coexist safely.
+
+To switch an existing database from SHA-256 to BLAKE3:
+
+```sh
+raid-integrity-monitor --mode upgrade-hash --from sha256 --to blake3
+```
+
+This verifies each file's current SHA-256 hash before computing the BLAKE3 replacement. Corrupted files are flagged and never silently re-hashed. The upgrade is resumable — if interrupted, re-running the command picks up where it left off.
 
 #### Database
 

@@ -400,7 +400,7 @@ public actor FileScanner {
 					total: total
 				)
 				let fileName = record.map {
-					truncateFilename(($0.path as NSString).lastPathComponent)
+					($0.path as NSString).lastPathComponent
 				} ?? ""
 				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
 				onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(eta)\(nameSegment)")
@@ -566,7 +566,7 @@ public actor FileScanner {
 					total: total
 				)
 				let fileName = verifiedRecord.map {
-					truncateFilename(($0.path as NSString).lastPathComponent)
+					($0.path as NSString).lastPathComponent
 				} ?? ""
 				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
 				onProgress?("Phase 3: Verifying \(completed)/\(total) (\(pct)%)\(eta)\(nameSegment)")
@@ -756,7 +756,7 @@ public actor FileScanner {
 			return nil
 		}
 
-		let fileName = truncateFilename(url.lastPathComponent)
+		let fileName = url.lastPathComponent
 		let overallPct = total > 0 ? (completed * 100) / total : 0
 		let eta = formatETA(
 			started: phaseStart,
@@ -768,15 +768,6 @@ public actor FileScanner {
 			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
 			onProg("\(phaseLabel) \(completed)/\(total) (\(overallPct)%)\(eta) — \(fileName) (\(filePct)%)")
 		}
-	}
-
-	// ============================================================================
-	private func truncateFilename(
-		_ name: String,
-		maxLength: Int = 30
-	) -> String {
-		guard name.count > maxLength else { return name }
-		return String(name.prefix(maxLength - 1)) + "…"
 	}
 
 	// ============================================================================

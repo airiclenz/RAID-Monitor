@@ -152,7 +152,7 @@ The consequence is slightly more verbose code (raw `sqlite3` C API rather than G
 
 The three major subsystems — hashing, database, and notifications — are defined as Swift protocols. All concrete types are hidden behind these protocols. Module boundaries are crossed only via protocols. This means:
 
-- Swapping SHA-256 for BLAKE3 requires adding one struct and one `case` in `HasherFactory` — nothing else changes.
+- Adding a new hash algorithm requires adding one struct and one `case` in `HasherFactory` — nothing else changes. SHA-256 and BLAKE3 are both implemented this way.
 - Swapping raw `sqlite3` for GRDB requires replacing `SQLiteManifestStore` — nothing else changes.
 - Adding email or webhook notifications requires adding one struct conforming to `AlertChannel` — nothing else changes.
 
@@ -173,6 +173,11 @@ The default configuration (`maxHashThreads: 2`) is tuned for the target hardware
 ```
 IntegrityMonitor/
 ├── Package.swift
+├── Sources/CBLAKE3/                    Vendored BLAKE3 C reference (CC0/Apache 2.0)
+│   ├── include/blake3.h
+│   ├── blake3.c, blake3_portable.c
+│   ├── blake3_dispatch.c, blake3_neon.c
+│   └── blake3_impl.h
 ├── Sources/IntegrityMonitor/
 │   ├── main.swift                      Entry point, CLI, dependency wiring
 │   ├── Models.swift                    All value types (FileRecord, ScanResult, Alert, ...)
@@ -180,7 +185,7 @@ IntegrityMonitor/
 │   ├── Logger.swift                    Lightweight structured logger with rotation
 │   │
 │   ├── Hashing/
-│   │   └── FileHasher.swift            FileHasher protocol + SHA256Hasher + HasherFactory
+│   │   └── FileHasher.swift            FileHasher protocol + SHA256Hasher + BLAKE3Hasher + HasherFactory
 │   │
 │   ├── Database/
 │   │   ├── ManifestStore.swift         ManifestStore protocol
@@ -406,24 +411,33 @@ The reconciliation is fully implemented via a database set-difference algorithm.
 
 ## 11. Hash Algorithm Strategy
 
-### Current implementation: SHA-256
+Two hash algorithms are supported. Both produce 256-bit (32-byte) digests and use the same streaming 4MB-chunk pattern to avoid loading large files into memory.
 
-SHA-256 is implemented via Apple's `CryptoKit` framework — a first-party, zero-dependency implementation. It is cryptographically strong, universally recognised, and appropriate for data integrity verification (the use case does not require cryptographic collision resistance, so SHA-256 is significantly more than adequate).
+### SHA-256
 
-Files are hashed by streaming in 4MB chunks. This avoids loading large files (multi-GB movies, etc.) into memory and performs well for sequential HDD reads.
+SHA-256 is implemented via Apple's `CryptoKit` framework — a first-party, zero-dependency implementation. It is cryptographically strong, universally recognised, and appropriate for data integrity verification. On Apple Silicon, CryptoKit uses hardware SHA extensions for near-native throughput.
 
-### Future: BLAKE3
+| | |
+|---|---|
+| **Advantages** | Hardware-accelerated on Apple Silicon; zero external code; universally recognised digest format |
+| **Disadvantages** | Slower than BLAKE3 in pure software; single-threaded by design |
 
-BLAKE3 is the planned future upgrade. It is approximately 3–5× faster than SHA-256 in software on Apple Silicon, is designed for parallelism, and has equivalent security properties for this use case. It is not available in the Apple SDK and would require either linking against the BLAKE3 C library or shelling out to a `blake3` binary.
+### BLAKE3
 
-The architecture is fully prepared for this upgrade:
+BLAKE3 is implemented via the official C reference from [BLAKE3-team/BLAKE3](https://github.com/BLAKE3-team/BLAKE3), vendored into `Sources/CBLAKE3/` as a Swift Package Manager C target. The vendored files include the ARM NEON optimisation (`blake3_neon.c`), which activates automatically on Apple Silicon via the `BLAKE3_USE_NEON=1` compile flag. The C source is dual-licensed CC0 / Apache 2.0.
 
-1. Add `struct BLAKE3Hasher: FileHasher` in `Hashing/FileHasher.swift`
-2. Add `case "blake3": return BLAKE3Hasher()` in `HasherFactory.make()`
-3. Update `Config.supportedAlgorithms`
-4. Run `--mode upgrade-hash --from sha256 --to blake3`
+| | |
+|---|---|
+| **Advantages** | ~2-3x faster than SHA-256 on Apple Silicon; Merkle tree design allows future parallelisation; modern algorithm with strong security properties |
+| **Disadvantages** | Not a system framework — vendored C code must be reviewed and updated manually; no hardware acceleration path (NEON is software SIMD, not a dedicated crypto engine) |
 
-No other files change.
+### Choosing an algorithm
+
+For most users, `blake3` is recommended for new installations due to its speed advantage. `sha256` remains the default for backward compatibility. Existing installations can migrate via:
+
+```bash
+raid-integrity-monitor --mode upgrade-hash --from sha256 --to blake3
+```
 
 ### Algorithm name storage
 
@@ -678,7 +692,7 @@ A record of significant design decisions and the reasoning behind them.
 
 | Decision | Alternatives considered | Reasoning |
 |---|---|---|
-| SHA-256 via CryptoKit, not BLAKE3 | BLAKE3 (faster, no native SDK support) | Zero dependencies. Architecture fully prepared for BLAKE3 upgrade via protocol + factory pattern. |
+| SHA-256 and BLAKE3 as dual algorithm options | Single algorithm only | SHA-256 via CryptoKit provides hardware acceleration and zero external code; BLAKE3 via vendored C reference provides ~2-3x speed improvement. Both produce 256-bit digests. Protocol + factory pattern makes adding algorithms a single-file change. BLAKE3 C source is vendored (not an external dependency) to preserve the zero-dependency requirement. |
 | Raw sqlite3 C API, not GRDB | GRDB (cleaner Swift API, external dependency) | No external dependencies. GRDB is swappable by replacing `SQLiteManifestStore` — one file. |
 | Scheduled scan, not FSEvents real-time | FSEvents daemon | FSEvents cannot capture kernel-level writes (journaling, Spotlight). Real-time would require a kext, conflicting with SIP on Apple Silicon. Scheduled scan is simpler, auditable, and sufficient for archival data. |
 | File-level checksumming, not block-level | dm-integrity equivalent (kernel module) | Kernel modules on macOS require disabling SIP — a security regression. File-level detection catches the vast majority of real-world bit-rot. |

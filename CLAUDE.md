@@ -7,6 +7,7 @@ RAID Monitor/
 ├── IntegrityMonitor/            Swift SPM project (v2 — active development)
 │   ├── Package.swift
 │   ├── Sources/
+│   │   ├── CBLAKE3/             Vendored BLAKE3 C reference (CC0/Apache 2.0)
 │   │   ├── IntegrityMonitor/    Library target — all business logic
 │   │   └── IntegrityMonitorCLI/ Executable target — main.swift only
 │   ├── NotifyHelper/            Notification helper executable target
@@ -38,7 +39,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 `Sources/IntegrityMonitor/` is a `.target` (library), not `.executableTarget`. The executable entry point lives in `Sources/IntegrityMonitorCLI/main.swift`. This is required because SPM test targets cannot depend on executable targets — only library targets. Do not merge these two directories.
 
 ### No external dependencies
-The only non-Apple imports are `sqlite3` (system-bundled) and `CryptoKit` (Apple SDK). Do not add SwiftPM package dependencies. The zero-dependency requirement is intentional and must be preserved.
+The only non-Apple imports are `sqlite3` (system-bundled), `CryptoKit` (Apple SDK), and the vendored BLAKE3 C reference implementation (`Sources/CBLAKE3/`). Do not add SwiftPM package dependencies. The zero-dependency requirement is intentional and must be preserved. BLAKE3 is vendored as C source files from the official [BLAKE3-team/BLAKE3](https://github.com/BLAKE3-team/BLAKE3) repository (CC0 / Apache 2.0), compiled as an SPM C target.
 
 ### Config uses decodeIfPresent everywhere
 All `Config` sub-structs implement `init(from decoder:)` with `decodeIfPresent` and hardcoded fallbacks. This lets users write partial config files (e.g. only `watchPaths` and `database`). Do not switch back to synthesised Codable decoding — it requires all keys to be present in the JSON.
@@ -69,7 +70,7 @@ The LaunchAgent uses `StartInterval` (default every 5 minutes, controlled by `sc
 | `Database/ManifestStore.swift` | `ManifestStore` | Protocol — defines all DB operations |
 | `Database/SQLiteManifestStore.swift` | `SQLiteManifestStore` | Raw sqlite3 C API implementation |
 | `Database/MirroredManifestStore.swift` | `MirroredManifestStore` | Dual-write wrapper: primary required, replica best-effort |
-| `Hashing/FileHasher.swift` | `SHA256Hasher`, `HasherFactory` | CryptoKit streaming hash, factory |
+| `Hashing/FileHasher.swift` | `SHA256Hasher`, `BLAKE3Hasher`, `HasherFactory` | CryptoKit + vendored BLAKE3 streaming hash, factory |
 | `Scanning/ExclusionRules.swift` | `ExclusionRules` | fnmatch glob matching with FNM_CASEFOLD |
 | `Scanning/FileScanner.swift` | `FileScanner` (actor) | 4-phase scan orchestration |
 | `Notifications/AlertChannel.swift` | `MacOSAlertChannel`, `AlertManager` | Notification dispatch, config-driven filtering |

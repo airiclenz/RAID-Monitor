@@ -343,12 +343,14 @@ func run() async throws -> Int32 {
 		let upgrader = HashUpgradeScanner(
 			store: store,
 			alertManager: alertManager,
-			logger: logger
+			logger: logger,
+			onProgress: progressHandler
 		)
 		let result = try await upgrader.upgrade(
 			from: fromAlg,
 			to: toAlg
 		)
+		clearProgress()
 		print("Hash upgrade complete: upgraded=\(result.upgraded) corrupted=\(result.corrupted) skipped=\(result.skipped)")
 
 	case "verify-db":
