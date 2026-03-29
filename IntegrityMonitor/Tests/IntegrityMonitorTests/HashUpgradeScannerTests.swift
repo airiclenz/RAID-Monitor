@@ -10,6 +10,7 @@ final class HashUpgradeScannerTests: XCTestCase {
     private var store: SQLiteManifestStore!
     private var logger: Logger!
     private var alertManager: AlertManager!
+    private var config: Config!
 
     override func setUp() {
         super.setUp()
@@ -24,6 +25,7 @@ final class HashUpgradeScannerTests: XCTestCase {
         let logURL = tempDir.appendingPathComponent("test.log")
         logger = Logger(path: logURL, level: .debug)
         alertManager = AlertManager(channels: [], config: NotificationConfig(), logger: logger)
+        config = Config(watchPaths: [tempDir.path])
     }
 
     override func tearDown() {
@@ -63,7 +65,7 @@ final class HashUpgradeScannerTests: XCTestCase {
             firstSeen: now, lastVerified: now, status: .ok
         ))
 
-        let upgrader = HashUpgradeScanner(store: store, alertManager: alertManager, logger: logger)
+        let upgrader = HashUpgradeScanner(store: store, config: config, alertManager: alertManager, logger: logger)
         // Upgrade from sha256 → sha256 (same alg — still exercises the code path)
         let result = try await upgrader.upgrade(from: "sha256", to: "sha256")
 
@@ -86,7 +88,7 @@ final class HashUpgradeScannerTests: XCTestCase {
             firstSeen: now, lastVerified: now, status: .ok
         ))
 
-        let upgrader = HashUpgradeScanner(store: store, alertManager: alertManager, logger: logger)
+        let upgrader = HashUpgradeScanner(store: store, config: config, alertManager: alertManager, logger: logger)
         let result = try await upgrader.upgrade(from: "sha256", to: "sha256")
 
         XCTAssertEqual(result.corrupted, 1)
@@ -110,7 +112,7 @@ final class HashUpgradeScannerTests: XCTestCase {
             firstSeen: now, lastVerified: now, status: .ok
         ))
 
-        let upgrader = HashUpgradeScanner(store: store, alertManager: alertManager, logger: logger)
+        let upgrader = HashUpgradeScanner(store: store, config: config, alertManager: alertManager, logger: logger)
         let result = try await upgrader.upgrade(from: "sha256", to: "sha256")
 
         XCTAssertEqual(result.skipped, 1)
@@ -132,7 +134,7 @@ final class HashUpgradeScannerTests: XCTestCase {
         ))
 
         // Upgrade once
-        let upgrader = HashUpgradeScanner(store: store, alertManager: alertManager, logger: logger)
+        let upgrader = HashUpgradeScanner(store: store, config: config, alertManager: alertManager, logger: logger)
         let result1 = try await upgrader.upgrade(from: "sha256", to: "sha256")
         XCTAssertEqual(result1.upgraded, 1)
 

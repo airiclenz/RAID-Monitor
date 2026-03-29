@@ -4,7 +4,7 @@ import Foundation
 // MARK: - File manifest
 // ---------------------------------------------------------------------------
 
-public struct FileRecord: Equatable {
+public struct FileRecord: Equatable, Sendable {
 	public var id: Int64?
 	public var path: String
 	public var size: Int64
@@ -42,7 +42,7 @@ public struct FileRecord: Equatable {
 	}
 }
 
-public enum FileStatus: String, Codable {
+public enum FileStatus: String, Codable, Sendable {
 	case ok
 	case new
 	case modified

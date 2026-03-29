@@ -342,6 +342,7 @@ func run() async throws -> Int32 {
 		defer { store.close() }
 		let upgrader = HashUpgradeScanner(
 			store: store,
+			config: config,
 			alertManager: alertManager,
 			logger: logger,
 			onProgress: progressHandler
