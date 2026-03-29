@@ -110,7 +110,7 @@ public actor FileScanner {
 		result.id = try store.insertScan(result)
 
 		try store.logEvent(ScanEvent(eventType: ScanEvent.scanStart))
-		logger.info("=== Scan started (mode: \(mode)) ===")
+		logger.info("\(Logger.c("=== Scan started", .boldGreen)) (mode: \(Logger.c("\(mode)", .boldWhite)))\(Logger.c(" ===", .boldGreen))")
 
 		do {
 			if mode == .verifyAll {
@@ -135,7 +135,7 @@ public actor FileScanner {
 				eventType: "scan_error",
 				detail: error.localizedDescription
 			))
-			logger.error("Scan interrupted: \(error)")
+			logger.error("\(Logger.c("Scan interrupted:", .boldRed)) \(error)")
 			throw error
 		}
 
@@ -157,7 +157,7 @@ public actor FileScanner {
 			hasIssues: hasIssues
 		)
 
-		logger.info("=== Scan complete: \(scanSummaryText(result)) ===")
+		logger.info("\(Logger.c("=== Scan complete:", .boldGreen)) \(scanSummaryText(result))\(Logger.c(" ===", .boldGreen))")
 		return result
 	}
 
@@ -165,7 +165,7 @@ public actor FileScanner {
 
 	// ============================================================================
 	private func runRAIDPhase() async throws {
-		logger.info("Phase 0: RAID health check")
+		logger.info("\(Logger.c("Phase 0:", .boldCyan)) RAID health check")
 		let (_, alerts) = try raidScanner.scan()
 		for alert in alerts {
 			if alert.title.contains("Unavailable") {
@@ -192,16 +192,16 @@ public actor FileScanner {
 		var result = result
 
 		// Pre-scan: sync primary → replica (no-op if no replica configured)
-		logger.info("Syncing replica database (if configured)")
+		logger.info("Syncing replica database \(Logger.c("(if configured)", .dim))")
 		try store.syncReplica()
 
 		// Phase 1: directory walk + triage
-		logger.info("Phase 1: Directory walk and triage")
+		logger.info("\(Logger.c("Phase 1:", .boldCyan)) Directory walk and triage")
 		let (toHash, pathsSeen, walkedPrefixes) = try runPhase1(result: &result)
 		onProgress?("")	 // end progress block
 
 		// Phase 2: hash new/modified files
-		logger.info("Phase 2: Hashing \(toHash.count) new/modified file(s)")
+		logger.info("\(Logger.c("Phase 2:", .boldCyan)) Hashing \(Logger.c("\(toHash.count)", .boldWhite)) new/modified file(s)")
 		try await runPhase2(toHash: toHash, result: &result)
 		onProgress?("")	 // end progress block
 
@@ -211,12 +211,12 @@ public actor FileScanner {
 			before: verificationCutoff,
 			limit: config.performance.maxVerificationsPerRun
 		)
-		logger.info("Phase 3: Re-verifying \(toVerify.count) file(s)")
+logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVerify.count)", .boldWhite)) file(s)")
 		try await runPhase3(toVerify: toVerify, result: &result)
-		onProgress?("")	 // end progress block
+		onProgress?("")  // end progress block
 
 		// Phase 4: missing file reconciliation
-		logger.info("Phase 4: Missing file reconciliation")
+		logger.info("\(Logger.c("Phase 4:", .boldCyan)) Missing file reconciliation")
 		try runPhase4(pathsSeen: pathsSeen, walkedPrefixes: walkedPrefixes, result: &result)
 
 		return result
@@ -229,7 +229,7 @@ public actor FileScanner {
 		var result = result
 
 		let toVerify = try store.allFilesToVerify()
-		logger.info("Verify-all: re-verifying \(toVerify.count) file(s)")
+		logger.info("\(Logger.c("Verify-all:", .boldCyan)) re-verifying \(Logger.c("\(toVerify.count)", .boldWhite)) file(s)")
 		try await runPhase3(toVerify: toVerify, result: &result)
 		onProgress?("")	 // end progress block
 
@@ -253,7 +253,7 @@ public actor FileScanner {
 				atPath: watchURL.path,
 				isDirectory: &isDir
 			), isDir.boolValue else {
-				logger.warn("Watch path inaccessible (volume may be unmounted): \(watchURL.path)")
+				logger.warn("Watch path inaccessible (volume may be unmounted): \(Logger.c(watchURL.path, .dim))")
 				alertManager.sendIfEnabled(volumeUnavailable: Alert(
 					title: "Volume Unavailable",
 					subtitle: (watchURL.path as NSString).lastPathComponent,
@@ -274,11 +274,11 @@ public actor FileScanner {
 				],
 				options: [.skipsHiddenFiles],
 				errorHandler: { url, error in
-					self.logger.warn("Cannot access \(url.path): \(error.localizedDescription)")
+					self.logger.warn("Cannot access \(Logger.c(url.path, .dim)): \(error.localizedDescription)")
 					return true	 // continue enumeration
 				}
 			) else {
-				logger.warn("Cannot enumerate \(watchURL.path)")
+				logger.warn("Cannot enumerate \(Logger.c(watchURL.path, .dim))")
 				continue
 			}
 
@@ -310,7 +310,7 @@ public actor FileScanner {
 				pathsSeen.insert(url.path)
 
 				if result.filesWalked % 500 == 0 {
-					onProgress?("Phase 1: \(result.filesWalked) files discovered")
+					onProgress?("Phase 1: \(Logger.c("\(result.filesWalked)", .yellow)) files discovered")
 				}
 
 				let mtime = resourceValues?.contentModificationDate ?? Date()
@@ -333,7 +333,7 @@ public actor FileScanner {
 			}
 		}
 
-		onProgress?("Phase 1: \(result.filesWalked) files discovered, \(toHash.count) to hash")
+		onProgress?("Phase 1: \(Logger.c("\(result.filesWalked)", .yellow)) files discovered, \(Logger.c("\(toHash.count)", .yellow)) to hash")
 		return (toHash, pathsSeen, walkedPrefixes)
 	}
 
@@ -403,7 +403,7 @@ public actor FileScanner {
 					($0.path as NSString).lastPathComponent
 				} ?? ""
 				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
-				onProgress?("Phase 2: Hashing \(completed)/\(total) (\(pct)%)\(eta)\(nameSegment)")
+				onProgress?("Phase 2: Hashing \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta)\(nameSegment)")
 
 				if let fileRecord = record {
 					// Track new/modified and log events (moved here from hashFile
@@ -503,7 +503,7 @@ public actor FileScanner {
 				status: status
 			)
 		} catch {
-			logger.warn("Cannot hash \(url.path): \(error)")
+			logger.warn("Cannot hash \(Logger.c(url.path, .dim)): \(error)")
 			return nil
 		}
 	}
@@ -569,7 +569,7 @@ public actor FileScanner {
 					($0.path as NSString).lastPathComponent
 				} ?? ""
 				let nameSegment = fileName.isEmpty ? "" : " — \(fileName)"
-				onProgress?("Phase 3: Verifying \(completed)/\(total) (\(pct)%)\(eta)\(nameSegment)")
+				onProgress?("Phase 3: Verifying \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta)\(nameSegment)")
 
 				if let verifiedResult = verifiedRecord {
 					pendingRecords.append(verifiedResult)
@@ -665,11 +665,11 @@ public actor FileScanner {
 			} else {
 				// Mismatch with unchanged mtime/size = bit-rot
 				updated.status = .corrupted
-				logger.error("BIT-ROT DETECTED: \(record.path) (stored: \(record.hash.prefix(8))... computed: \(computed.prefix(8))...)")
+				logger.error("\(Logger.c("BIT-ROT DETECTED:", .boldRed)) \(Logger.c(record.path, .dim)) (stored: \(Logger.c(String(record.hash.prefix(8)), .yellow))... computed: \(Logger.c(String(computed.prefix(8)), .yellow))...)")
 			}
 			return updated
 		} catch {
-			logger.warn("Cannot re-verify \(record.path): \(error)")
+			logger.warn("Cannot re-verify \(Logger.c(record.path, .dim)): \(error)")
 			return nil
 		}
 	}
@@ -766,7 +766,7 @@ public actor FileScanner {
 
 		return { bytesHashed, totalSize in
 			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
-			onProg("\(phaseLabel) \(completed)/\(total) (\(overallPct)%)\(eta) — \(fileName) (\(filePct)%)")
+			onProg("\(phaseLabel) \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(fileName) (\(Logger.c("\(filePct)%", .yellow)))")
 		}
 	}
 
@@ -781,12 +781,12 @@ public actor FileScanner {
 		let elapsed = Date().timeIntervalSince(started)
 		let secsPerItem = elapsed / Double(completed)
 		let remaining = Int(secsPerItem * Double(total - completed))
-		if remaining < 60 { return " — \(remaining)s remaining" }
+		if remaining < 60 { return " — \(Logger.c("\(remaining)s", .yellow)) remaining" }
 		let mins = remaining / 60
 		let secs = remaining % 60
-		if mins < 60 { return " — \(mins)m \(secs)s remaining" }
+		if mins < 60 { return " — \(Logger.c("\(mins)m \(secs)s", .yellow)) remaining" }
 		let hours = mins / 60
-		return " — \(hours)h \(mins % 60)m remaining"
+		return " — \(Logger.c("\(hours)h \(mins % 60)m", .yellow)) remaining"
 	}
 }
 

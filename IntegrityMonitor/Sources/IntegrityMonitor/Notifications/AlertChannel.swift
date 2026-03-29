@@ -31,7 +31,7 @@ public struct MacOSAlertChannel: AlertChannel {
 	// ============================================================================
 	public func send(_ alert: Alert) {
 		guard FileManager.default.isExecutableFile(atPath: notifyBinaryPath) else {
-			logger.warn("Notification helper not found or not executable: \(notifyBinaryPath)")
+			logger.warn("Notification helper not found or not executable: \(Logger.c(notifyBinaryPath, .dim))")
 			return
 		}
 
@@ -81,7 +81,7 @@ public struct AlertManager {
 
 	// ============================================================================
 	public func send(_ alert: Alert) {
-		logger.info("Alert [\(alert.severity.rawValue.uppercased())] \(alert.title): \(alert.body.prefix(100))")
+		logger.info("Alert [\(Logger.c(alert.severity.rawValue.uppercased(), alert.severity == .critical ? .boldRed : .yellow))] \(Logger.c(alert.title, .boldWhite)): \(alert.body.prefix(100))")
 		for channel in channels {
 			channel.send(alert)
 		}

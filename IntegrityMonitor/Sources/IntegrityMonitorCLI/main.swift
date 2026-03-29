@@ -192,7 +192,7 @@ func run() async throws -> Int32 {
 
 		// Always run RAID check
 		if config.raid.enabled {
-			logger.info("Scheduled run: RAID health check")
+			logger.info("\(Logger.c("Scheduled run:", .boldCyan)) RAID health check")
 			let raidScanner = RAIDScanner(
 				config: config.raid,
 				logger: logger
@@ -223,7 +223,7 @@ func run() async throws -> Int32 {
 		let elapsed = Date().timeIntervalSince(lastFileScanTime)
 
 		if elapsed >= fileScanIntervalSeconds {
-			logger.info("Scheduled run: file scan due (last completed \(Int(elapsed / 3600))h ago)")
+			logger.info("\(Logger.c("Scheduled run:", .boldCyan)) file scan due (last completed \(Logger.c("\(Int(elapsed / 3600))h", .boldWhite)) ago)")
 			let hasher = try HasherFactory.make(for: config.hashAlgorithm)
 			let exclusions = ExclusionRules(config: config.exclude)
 			let raidScanner = RAIDScanner(
@@ -242,7 +242,7 @@ func run() async throws -> Int32 {
 			_ = try await scanner.scan(mode: .filesOnly)
 		} else {
 			let nextIn = Int((fileScanIntervalSeconds - elapsed) / 3600)
-			logger.info("Scheduled run: file scan not due yet (next in ~\(nextIn)h)")
+			logger.info("\(Logger.c("Scheduled run:", .boldCyan)) file scan not due yet (next in \(Logger.c("~\(nextIn)h", .boldWhite)))")
 		}
 
 	case "scan":

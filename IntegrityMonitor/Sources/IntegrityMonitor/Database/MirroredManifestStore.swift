@@ -169,7 +169,7 @@ public final class MirroredManifestStore: ManifestStore {
 				try replicaStore.upsertBatch(batch)
 				count += batch.count
 			}
-			logger.info("Replica sync: \(count) record(s) synced")
+			logger.info("Replica sync: \(Logger.c("\(count)", .boldWhite)) record(s) synced")
 		} catch {
 			logger.warn("Replica sync failed (continuing): \(error)")
 		}

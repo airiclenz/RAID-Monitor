@@ -40,7 +40,7 @@ public struct RAIDScanner {
 		var arrays = RAIDOutputParser.parse(output)
 
 		if arrays.isEmpty {
-			logger.warn("No Apple-RAID sets found — array may be unavailable")
+			logger.warn("No Apple-RAID sets found — \(Logger.c("array may be unavailable", .boldYellow))")
 			let unavailableAlert = Alert(
 				title: "RAID Array Unavailable",
 				subtitle: "No arrays detected",
@@ -49,7 +49,7 @@ public struct RAIDScanner {
 			)
 			return ([], [unavailableAlert])
 		} else {
-			logger.info("Found \(arrays.count) Apple-RAID set(s)")
+			logger.info("Found \(Logger.c("\(arrays.count)", .boldWhite)) Apple-RAID set(s)")
 		}
 
 		// SMART check for configured member disks
@@ -61,7 +61,7 @@ public struct RAIDScanner {
 					let parentDisk = parentDisk(from: member.devNode)
 					if config.memberDisks.contains(parentDisk) || config.memberDisks.contains(member.devNode) {
 						updatedMember.smartStatus = checkSMART(disk: parentDisk)
-						logger.info("SMART: /dev/\(parentDisk) (\(member.devNode)): \(updatedMember.smartStatus.rawValue)")
+						logger.info("SMART: \(Logger.c("/dev/\(parentDisk)", .dim)) (\(member.devNode)): \(Logger.c(updatedMember.smartStatus.rawValue, updatedMember.smartStatus.rawValue == "Verified" ? .green : .boldRed))")
 					}
 					return updatedMember
 				}

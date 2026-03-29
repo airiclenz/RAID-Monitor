@@ -111,14 +111,14 @@ public struct HashUpgradeScanner {
 		// Check count first — if none, return early without needing valid hashers.
 		let totalCount = try store.countRecords(withAlgorithm: oldAlgorithm)
 		guard totalCount > 0 else {
-			logger.info("Hash upgrade: no records with algorithm '\(oldAlgorithm)' — nothing to do")
+			logger.info("Hash upgrade: no records with algorithm \(Logger.c("'\(oldAlgorithm)'", .cyan)) — nothing to do")
 			return UpgradeResult()
 		}
 
 		let oldHasher = try HasherFactory.make(for: oldAlgorithm)
 		let newHasher = try HasherFactory.make(for: newAlgorithm)
 
-		logger.info("Hash upgrade: \(totalCount) file(s) to upgrade from \(oldAlgorithm) → \(newAlgorithm)")
+		logger.info("Hash upgrade: \(Logger.c("\(totalCount)", .boldWhite)) file(s) to upgrade from \(Logger.c(oldAlgorithm, .cyan)) → \(Logger.c(newAlgorithm, .cyan))")
 
 		try store.logEvent(ScanEvent(
 			eventType: ScanEvent.hashUpgradeStart,
@@ -187,7 +187,7 @@ public struct HashUpgradeScanner {
 				case .corrupted(let corruptedRecord, let storedPrefix, let computedPrefix):
 					pendingRecords.append(corruptedRecord)
 					result.corrupted += 1
-					logger.error("CORRUPTION DETECTED during hash upgrade: \(corruptedRecord.path)")
+					logger.error("\(Logger.c("CORRUPTION DETECTED", .boldRed)) during hash upgrade: \(Logger.c(corruptedRecord.path, .dim))")
 					try store.logEvent(ScanEvent(
 						eventType: ScanEvent.fileCorrupted,
 						path: corruptedRecord.path,
@@ -263,7 +263,7 @@ public struct HashUpgradeScanner {
 			detail: "{\"from\":\"\(oldAlgorithm)\",\"to\":\"\(newAlgorithm)\",\"upgraded\":\(result.upgraded),\"corrupted\":\(result.corrupted),\"skipped\":\(result.skipped)}"
 		))
 
-		logger.info("Hash upgrade complete: upgraded=\(result.upgraded) corrupted=\(result.corrupted) skipped=\(result.skipped)")
+		logger.info("\(Logger.c("Hash upgrade complete:", .boldGreen)) upgraded=\(Logger.c("\(result.upgraded)", .boldWhite)) corrupted=\(Logger.c("\(result.corrupted)", result.corrupted > 0 ? .boldRed : .boldWhite)) skipped=\(Logger.c("\(result.skipped)", .boldWhite))")
 		return result
 	}
 
@@ -292,7 +292,7 @@ public struct HashUpgradeScanner {
 					onProgress: verifyProgress
 				)
 			} catch {
-				logger.warn("Cannot read \(record.path): \(error) — skipping")
+				logger.warn("Cannot read \(Logger.c(record.path, .dim)): \(error) — skipping")
 				return .skipped(path: record.path)
 			}
 
@@ -312,7 +312,7 @@ public struct HashUpgradeScanner {
 			do {
 				newHash = try newHasher.hash(fileAt: url, onProgress: nil)
 			} catch {
-				logger.warn("Cannot hash \(record.path) with \(newAlgorithm): \(error) — skipping")
+				logger.warn("Cannot hash \(Logger.c(record.path, .dim)) with \(Logger.c(newAlgorithm, .cyan)): \(error) — skipping")
 				return .skipped(path: record.path)
 			}
 
@@ -341,7 +341,7 @@ public struct HashUpgradeScanner {
 			completed: completed,
 			total: total
 		)
-		onProgress("Upgrading \(completed)/\(total) (\(pct)%)\(eta) — \(fileName)")
+		onProgress("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta) — \(fileName)")
 	}
 
 	// ============================================================================
@@ -371,7 +371,7 @@ public struct HashUpgradeScanner {
 
 		return { bytesHashed, totalSize in
 			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
-			onProg("Upgrading \(completed)/\(total) (\(overallPct)%)\(eta) — \(fileName) \(phaseLabel) (\(filePct)%)")
+			onProg("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(fileName) \(phaseLabel) (\(Logger.c("\(filePct)%", .yellow)))")
 		}
 	}
 
@@ -385,11 +385,11 @@ public struct HashUpgradeScanner {
 		let elapsed = Date().timeIntervalSince(started)
 		let secsPerItem = elapsed / Double(completed)
 		let remaining = Int(secsPerItem * Double(total - completed))
-		if remaining < 60 { return " — \(remaining)s remaining" }
+		if remaining < 60 { return " — \(Logger.c("\(remaining)s", .yellow)) remaining" }
 		let mins = remaining / 60
 		let secs = remaining % 60
-		if mins < 60 { return " — \(mins)m \(secs)s remaining" }
+		if mins < 60 { return " — \(Logger.c("\(mins)m \(secs)s", .yellow)) remaining" }
 		let hours = mins / 60
-		return " — \(hours)h \(mins % 60)m remaining"
+		return " — \(Logger.c("\(hours)h \(mins % 60)m", .yellow)) remaining"
 	}
 }
