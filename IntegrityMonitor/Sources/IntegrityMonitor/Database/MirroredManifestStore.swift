@@ -63,9 +63,9 @@ public final class MirroredManifestStore: ManifestStore {
 	}
 
 	// ============================================================================
-	public func markMissing(path: String) throws {
-		try primary.markMissing(path: path)
-		replicaTry { try $0.markMissing(path: path) }
+	public func deleteRecord(path: String) throws {
+		try primary.deleteRecord(path: path)
+		replicaTry { try $0.deleteRecord(path: path) }
 	}
 
 	// ============================================================================

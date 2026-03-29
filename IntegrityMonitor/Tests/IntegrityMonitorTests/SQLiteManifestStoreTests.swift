@@ -130,17 +130,17 @@ final class SQLiteManifestStoreTests: XCTestCase {
         XCTAssertEqual(result, expected)
     }
 
-    // MARK: - markMissing
+    // MARK: - deleteRecord
 
-    func testMarkMissing_updatesStatus() throws {
+    func testDeleteRecord_removesFromDB() throws {
         let now = Date()
         try store.upsert(FileRecord(
             path: "/RAID/gone.jpg", size: 0, mtime: now, hash: "abc",
             hashAlgorithm: "sha256", firstSeen: now, lastVerified: now, status: .ok
         ))
-        try store.markMissing(path: "/RAID/gone.jpg")
+        try store.deleteRecord(path: "/RAID/gone.jpg")
         let fetched = try store.record(for: "/RAID/gone.jpg")
-        XCTAssertEqual(fetched?.status, .missing)
+        XCTAssertNil(fetched)
     }
 
     // MARK: - filesToVerify ordering

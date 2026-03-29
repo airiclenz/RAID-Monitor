@@ -24,7 +24,7 @@ public final class SQLiteManifestStore: ManifestStore {
 	private var stmtUpsertFile: OpaquePointer?
 	private var stmtSelectFile: OpaquePointer?
 	private var stmtAllPaths: OpaquePointer?
-	private var stmtMarkMissing: OpaquePointer?
+	private var stmtDeleteFile: OpaquePointer?
 	private var stmtInsertEvent: OpaquePointer?
 	private var stmtInsertScan: OpaquePointer?
 	private var stmtUpdateScan: OpaquePointer?
@@ -60,20 +60,21 @@ public final class SQLiteManifestStore: ManifestStore {
 
 		try applyPragmas()
 		try createSchema()
+		try runMigrations()
 		try prepareStatements()
 	}
 
 	// ============================================================================
 	public func close() {
 		let stmts: [OpaquePointer?] = [
-			stmtUpsertFile, stmtSelectFile, stmtAllPaths, stmtMarkMissing,
+			stmtUpsertFile, stmtSelectFile, stmtAllPaths, stmtDeleteFile,
 			stmtInsertEvent, stmtInsertScan, stmtUpdateScan, stmtLastScan,
 			stmtFilesToVerify, stmtAllFilesToVerify, stmtSelectByAlgorithm,
 			stmtCountByAlgorithm, stmtAllRecords
 		]
 		for stmt in stmts { sqlite3_finalize(stmt) }
 		stmtUpsertFile = nil; stmtSelectFile = nil; stmtAllPaths = nil
-		stmtMarkMissing = nil; stmtInsertEvent = nil; stmtInsertScan = nil
+		stmtDeleteFile = nil; stmtInsertEvent = nil; stmtInsertScan = nil
 		stmtUpdateScan = nil; stmtLastScan = nil; stmtFilesToVerify = nil
 		stmtAllFilesToVerify = nil; stmtSelectByAlgorithm = nil
 		stmtCountByAlgorithm = nil; stmtAllRecords = nil
@@ -250,14 +251,14 @@ public final class SQLiteManifestStore: ManifestStore {
 	}
 
 	// ============================================================================
-	public func markMissing(path: String) throws {
-		guard let stmt = stmtMarkMissing else { throw AppError.database("Database not open") }
+	public func deleteRecord(path: String) throws {
+		guard let stmt = stmtDeleteFile else { throw AppError.database("Database not open") }
 		defer { sqlite3_reset(stmt) }
 
 		sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT)
 		let rc = sqlite3_step(stmt)
 		guard rc == SQLITE_DONE else {
-			throw AppError.database("markMissing failed for \(path): \(dbError())")
+			throw AppError.database("deleteRecord failed for \(path): \(dbError())")
 		}
 	}
 
@@ -439,6 +440,28 @@ public final class SQLiteManifestStore: ManifestStore {
 	}
 
 	// ============================================================================
+	private func runMigrations() throws {
+		guard let db = db else { return }
+
+		// Read current schema version.
+		var currentVersion = 1
+		var versionStmt: OpaquePointer?
+		if sqlite3_prepare_v2(db, "SELECT version FROM schema_version LIMIT 1", -1, &versionStmt, nil) == SQLITE_OK {
+			if sqlite3_step(versionStmt) == SQLITE_ROW {
+				currentVersion = Int(sqlite3_column_int(versionStmt, 0))
+			}
+		}
+		sqlite3_finalize(versionStmt)
+
+		// Migration 2: Delete records with status='missing' (files are now deleted
+		// immediately in Phase 4 instead of being marked missing).
+		if currentVersion < 2 {
+			try exec("DELETE FROM files WHERE status = 'missing'")
+			try exec("UPDATE schema_version SET version = 2")
+		}
+	}
+
+	// ============================================================================
 	private func prepareStatements() throws {
 		stmtUpsertFile = try prepare("""
 			INSERT INTO files
@@ -460,7 +483,7 @@ public final class SQLiteManifestStore: ManifestStore {
 
 		stmtAllPaths = try prepare("SELECT path FROM files")
 
-		stmtMarkMissing = try prepare("UPDATE files SET status = 'missing' WHERE path = ?")
+		stmtDeleteFile = try prepare("DELETE FROM files WHERE path = ?")
 
 		stmtInsertEvent = try prepare(
 			"INSERT INTO events (timestamp, event_type, path, detail) VALUES (?, ?, ?, ?)"

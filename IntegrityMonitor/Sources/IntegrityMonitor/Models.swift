@@ -47,7 +47,6 @@ public enum FileStatus: String, Codable, Sendable {
 	case new
 	case modified
 	case corrupted
-	case missing
 }
 
 // ---------------------------------------------------------------------------

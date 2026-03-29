@@ -30,7 +30,7 @@ public protocol ManifestStore: AnyObject {
 	/// reconciliation: caller subtracts the paths seen during the walk.
 	func allPaths() throws -> Set<String>
 
-	func markMissing(path: String) throws
+	func deleteRecord(path: String) throws
 
 	// MARK: Events
 	func logEvent(_ event: ScanEvent) throws

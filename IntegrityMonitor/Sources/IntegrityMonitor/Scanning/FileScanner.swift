@@ -693,8 +693,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 					continue
 				}
 
-				guard let existing = try store.record(for: path),
-					  existing.status != .missing else {
+				guard let existing = try store.record(for: path) else {
 					continue
 				}
 
@@ -710,7 +709,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 					continue
 				}
 
-				try store.markMissing(path: path)
+				try store.deleteRecord(path: path)
 				try store.logEvent(ScanEvent(
 					eventType: ScanEvent.fileMissing,
 					path: path

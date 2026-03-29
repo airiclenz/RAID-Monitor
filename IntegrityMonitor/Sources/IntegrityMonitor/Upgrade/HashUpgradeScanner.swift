@@ -16,6 +16,9 @@ import Foundation
 //
 // Uses per-volume semaphores for concurrent hashing: SSDs get multiple
 // threads, HDDs get 1 — matching the FileScanner Phase 2/3 pattern.
+//
+// Progress is reported exclusively from the single-threaded drain loop
+// (not from concurrent hash callbacks) to guarantee clean, monotonic output.
 // ---------------------------------------------------------------------------
 
 public struct HashUpgradeScanner {
@@ -29,9 +32,6 @@ public struct HashUpgradeScanner {
 	private let alertManager: AlertManager
 	private let logger: Logger
 	private let onProgress: ProgressHandler?
-
-	/// Files above this size get per-file byte progress in the progress line.
-	private let largeFileThreshold: Int64 = 100 * 1024 * 1024
 
 	/// Per-volume concurrency info, keyed by device ID.
 	private let volumeMap: [dev_t: VolumeInfo]
@@ -73,7 +73,6 @@ public struct HashUpgradeScanner {
 		public var upgraded: Int = 0
 		public var corrupted: Int = 0
 		public var skipped: Int = 0	 // missing or inaccessible
-		public var alreadyUpgraded: Int = 0
 	}
 
 	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -108,34 +107,31 @@ public struct HashUpgradeScanner {
 		from oldAlgorithm: String,
 		to newAlgorithm: String
 	) async throws -> UpgradeResult {
-		// Check count first — if none, return early without needing valid hashers.
-		let totalCount = try store.countRecords(withAlgorithm: oldAlgorithm)
-		guard totalCount > 0 else {
-			logger.info("Hash upgrade: no records with algorithm \(Logger.c("'\(oldAlgorithm)'", .cyan)) — nothing to do")
-			return UpgradeResult()
-		}
-
 		let oldHasher = try HasherFactory.make(for: oldAlgorithm)
 		let newHasher = try HasherFactory.make(for: newAlgorithm)
-
-		logger.info("Hash upgrade: \(Logger.c("\(totalCount)", .boldWhite)) file(s) to upgrade from \(Logger.c(oldAlgorithm, .cyan)) → \(Logger.c(newAlgorithm, .cyan))")
-
-		try store.logEvent(ScanEvent(
-			eventType: ScanEvent.hashUpgradeStart,
-			detail: "{\"from\":\"\(oldAlgorithm)\",\"to\":\"\(newAlgorithm)\",\"count\":\(totalCount)}"
-		))
 
 		// Load all candidates. At ~200 bytes per FileRecord, even 100K records is
 		// only ~20 MB. The memory problem was from accumulated Data hashing buffers,
 		// which autoreleasepool in upgradeFile() already fixes.
 		let candidates = try store.records(withAlgorithm: oldAlgorithm)
+		let total = candidates.count
+
+		guard total > 0 else {
+			logger.info("Hash upgrade: no records with algorithm \(Logger.c("'\(oldAlgorithm)'", .cyan)) — nothing to do")
+			return UpgradeResult()
+		}
+
+		logger.info("Hash upgrade: \(Logger.c("\(total)", .boldWhite)) file(s) to upgrade from \(Logger.c(oldAlgorithm, .cyan)) → \(Logger.c(newAlgorithm, .cyan))")
+
+		try store.logEvent(ScanEvent(
+			eventType: ScanEvent.hashUpgradeStart,
+			detail: "{\"from\":\"\(oldAlgorithm)\",\"to\":\"\(newAlgorithm)\",\"count\":\(total)}"
+		))
 
 		var result = UpgradeResult()
-		let batchSize = config.performance.dbBatchSize
 		let maxThreads = totalHashThreads
 		let upgradeStart = Date()
 		var completed = 0
-		var pendingRecords: [FileRecord] = []
 
 		try await withThrowingTaskGroup(of: FileUpgradeResult.self) { group in
 			var iterator = candidates.makeIterator()
@@ -144,23 +140,13 @@ public struct HashUpgradeScanner {
 			// Prime the pool with up to maxThreads initial tasks.
 			while inFlight < maxThreads, let record = iterator.next() {
 				let semaphore = volumeSemaphore(for: record.path)
-				let fileProgress = buildFileProgress(
-					fileName: (record.path as NSString).lastPathComponent,
-					fileURL: URL(fileURLWithPath: record.path),
-					phaseLabel: "verifying",
-					completed: completed,
-					total: totalCount,
-					phaseStart: upgradeStart
-				)
 				group.addTask {
 					await semaphore?.acquire()
 					let fileResult = self.upgradeFile(
 						record: record,
 						oldHasher: oldHasher,
 						newHasher: newHasher,
-						oldAlgorithm: oldAlgorithm,
-						newAlgorithm: newAlgorithm,
-						verifyProgress: fileProgress
+						newAlgorithm: newAlgorithm
 					)
 					await semaphore?.release()
 					return fileResult
@@ -169,23 +155,25 @@ public struct HashUpgradeScanner {
 			}
 
 			// Drain loop: for each completed task, collect result and add next task.
+			// All progress reporting happens here (single-threaded) to guarantee
+			// clean, monotonically increasing output with no interleaving.
 			while let fileResult = try await group.next() {
 				inFlight -= 1
 				completed += 1
 
 				switch fileResult {
 				case .upgraded(let upgradedRecord):
-					pendingRecords.append(upgradedRecord)
+					try store.upsert(upgradedRecord)
 					result.upgraded += 1
 					reportProgress(
 						completed: completed,
-						total: totalCount,
+						total: total,
 						fileName: (upgradedRecord.path as NSString).lastPathComponent,
 						phaseStart: upgradeStart
 					)
 
 				case .corrupted(let corruptedRecord, let storedPrefix, let computedPrefix):
-					pendingRecords.append(corruptedRecord)
+					try store.upsert(corruptedRecord)
 					result.corrupted += 1
 					logger.error("\(Logger.c("CORRUPTION DETECTED", .boldRed)) during hash upgrade: \(Logger.c(corruptedRecord.path, .dim))")
 					try store.logEvent(ScanEvent(
@@ -201,7 +189,7 @@ public struct HashUpgradeScanner {
 					))
 					reportProgress(
 						completed: completed,
-						total: totalCount,
+						total: total,
 						fileName: (corruptedRecord.path as NSString).lastPathComponent,
 						phaseStart: upgradeStart
 					)
@@ -210,38 +198,22 @@ public struct HashUpgradeScanner {
 					result.skipped += 1
 					reportProgress(
 						completed: completed,
-						total: totalCount,
+						total: total,
 						fileName: (path as NSString).lastPathComponent,
 						phaseStart: upgradeStart
 					)
 				}
 
-				// Flush DB batch
-				if pendingRecords.count >= batchSize {
-					try store.upsertBatch(pendingRecords)
-					pendingRecords.removeAll(keepingCapacity: true)
-				}
-
 				// Add next task from iterator
 				if let record = iterator.next() {
 					let semaphore = volumeSemaphore(for: record.path)
-					let fileProgress = buildFileProgress(
-						fileName: (record.path as NSString).lastPathComponent,
-						fileURL: URL(fileURLWithPath: record.path),
-						phaseLabel: "verifying",
-						completed: completed,
-						total: totalCount,
-						phaseStart: upgradeStart
-					)
 					group.addTask {
 						await semaphore?.acquire()
 						let fileResult = self.upgradeFile(
 							record: record,
 							oldHasher: oldHasher,
 							newHasher: newHasher,
-							oldAlgorithm: oldAlgorithm,
-							newAlgorithm: newAlgorithm,
-							verifyProgress: fileProgress
+							newAlgorithm: newAlgorithm
 						)
 						await semaphore?.release()
 						return fileResult
@@ -249,11 +221,6 @@ public struct HashUpgradeScanner {
 					inFlight += 1
 				}
 			}
-		}
-
-		// Flush remaining records
-		if !pendingRecords.isEmpty {
-			try store.upsertBatch(pendingRecords)
 		}
 
 		onProgress?("")  // clear progress line
@@ -277,9 +244,7 @@ public struct HashUpgradeScanner {
 		record: FileRecord,
 		oldHasher: any FileHasher,
 		newHasher: any FileHasher,
-		oldAlgorithm: String,
-		newAlgorithm: String,
-		verifyProgress: HashProgressHandler?
+		newAlgorithm: String
 	) -> FileUpgradeResult {
 		autoreleasepool {
 			let url = URL(fileURLWithPath: record.path)
@@ -287,10 +252,7 @@ public struct HashUpgradeScanner {
 			// Step 1: Verify the old hash
 			let oldHash: String
 			do {
-				oldHash = try oldHasher.hash(
-					fileAt: url,
-					onProgress: verifyProgress
-				)
+				oldHash = try oldHasher.hash(fileAt: url, onProgress: nil)
 			} catch {
 				logger.warn("Cannot read \(Logger.c(record.path, .dim)): \(error) — skipping")
 				return .skipped(path: record.path)
@@ -342,37 +304,6 @@ public struct HashUpgradeScanner {
 			total: total
 		)
 		onProgress("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(pct)%", .yellow)))\(eta) — \(fileName)")
-	}
-
-	// ============================================================================
-	/// Build a per-file progress callback for large files.
-	/// For files below the threshold, returns nil (no per-chunk progress).
-	private func buildFileProgress(
-		fileName: String,
-		fileURL: URL,
-		phaseLabel: String,
-		completed: Int,
-		total: Int,
-		phaseStart: Date
-	) -> HashProgressHandler? {
-		let fileSize = Int64(
-			(try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-		)
-		guard fileSize > largeFileThreshold, let onProg = onProgress else {
-			return nil
-		}
-
-		let overallPct = total > 0 ? (completed * 100) / total : 0
-		let eta = formatETA(
-			started: phaseStart,
-			completed: completed,
-			total: total
-		)
-
-		return { bytesHashed, totalSize in
-			let filePct = totalSize > 0 ? Int(bytesHashed * 100 / totalSize) : 0
-			onProg("Upgrading \(Logger.c("\(completed)", .yellow))/\(Logger.c("\(total)", .yellow)) (\(Logger.c("\(overallPct)%", .yellow)))\(eta) — \(fileName) \(phaseLabel) (\(Logger.c("\(filePct)%", .yellow)))")
-		}
 	}
 
 	// ============================================================================
