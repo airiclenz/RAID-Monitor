@@ -95,12 +95,12 @@ final class SHA256HasherTests: XCTestCase {
     }
 
     func testHasherFactory_unknownAlgorithm() {
-        XCTAssertThrowsError(try HasherFactory.make(for: "blake3")) { error in
+        XCTAssertThrowsError(try HasherFactory.make(for: "md5")) { error in
             guard case AppError.unsupportedHashAlgorithm(let name) = error else {
                 XCTFail("Expected unsupportedHashAlgorithm error, got \(error)")
                 return
             }
-            XCTAssertEqual(name, "blake3")
+            XCTAssertEqual(name, "md5")
         }
     }
 }

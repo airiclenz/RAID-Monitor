@@ -8,9 +8,19 @@ let package = Package(
         .executable(name: "raid-integrity-monitor", targets: ["IntegrityMonitorCLI"]),
     ],
     targets: [
+        // Vendored BLAKE3 C reference implementation (CC0 / Apache 2.0)
+        .target(
+            name: "CBLAKE3",
+            path: "Sources/CBLAKE3",
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("BLAKE3_USE_NEON", to: "1")
+            ]
+        ),
         // All business logic — library so the test target can import it
         .target(
             name: "IntegrityMonitor",
+            dependencies: ["CBLAKE3"],
             path: "Sources/IntegrityMonitor",
             linkerSettings: [
                 .linkedLibrary("sqlite3")

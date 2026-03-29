@@ -32,6 +32,7 @@ public final class SQLiteManifestStore: ManifestStore {
 	private var stmtFilesToVerify: OpaquePointer?
 	private var stmtAllFilesToVerify: OpaquePointer?
 	private var stmtSelectByAlgorithm: OpaquePointer?
+	private var stmtCountByAlgorithm: OpaquePointer?
 	private var stmtAllRecords: OpaquePointer?
 
 	// ============================================================================
@@ -68,14 +69,14 @@ public final class SQLiteManifestStore: ManifestStore {
 			stmtUpsertFile, stmtSelectFile, stmtAllPaths, stmtMarkMissing,
 			stmtInsertEvent, stmtInsertScan, stmtUpdateScan, stmtLastScan,
 			stmtFilesToVerify, stmtAllFilesToVerify, stmtSelectByAlgorithm,
-			stmtAllRecords
+			stmtCountByAlgorithm, stmtAllRecords
 		]
 		for stmt in stmts { sqlite3_finalize(stmt) }
 		stmtUpsertFile = nil; stmtSelectFile = nil; stmtAllPaths = nil
 		stmtMarkMissing = nil; stmtInsertEvent = nil; stmtInsertScan = nil
 		stmtUpdateScan = nil; stmtLastScan = nil; stmtFilesToVerify = nil
 		stmtAllFilesToVerify = nil; stmtSelectByAlgorithm = nil
-		stmtAllRecords = nil
+		stmtCountByAlgorithm = nil; stmtAllRecords = nil
 
 		sqlite3_close(db)
 		db = nil
@@ -135,6 +136,46 @@ public final class SQLiteManifestStore: ManifestStore {
 			results.append(extractFileRecord(from: stmt))
 		}
 		return results
+	}
+
+	// ============================================================================
+	public func countRecords(withAlgorithm algorithm: String) throws -> Int {
+		guard let stmt = stmtCountByAlgorithm else { throw AppError.database("Database not open") }
+		defer { sqlite3_reset(stmt) }
+
+		sqlite3_bind_text(stmt, 1, algorithm, -1, SQLITE_TRANSIENT)
+		let rc = sqlite3_step(stmt)
+		guard rc == SQLITE_ROW else {
+			throw AppError.database("COUNT by algorithm failed: \(dbError())")
+		}
+		return Int(sqlite3_column_int64(stmt, 0))
+	}
+
+	// ============================================================================
+	public func forEachRecord(
+		withAlgorithm algorithm: String,
+		batchSize: Int,
+		_ body: ([FileRecord]) throws -> Void
+	) throws {
+		guard let stmt = stmtSelectByAlgorithm else { throw AppError.database("Database not open") }
+		defer { sqlite3_reset(stmt) }
+
+		sqlite3_bind_text(stmt, 1, algorithm, -1, SQLITE_TRANSIENT)
+		var batch: [FileRecord] = []
+		batch.reserveCapacity(batchSize)
+		while true {
+			let rc = sqlite3_step(stmt)
+			if rc == SQLITE_DONE { break }
+			guard rc == SQLITE_ROW else {
+				throw AppError.database("SELECT by algorithm failed: \(dbError())")
+			}
+			batch.append(extractFileRecord(from: stmt))
+			if batch.count >= batchSize {
+				try body(batch)
+				batch.removeAll(keepingCapacity: true)
+			}
+		}
+		if !batch.isEmpty { try body(batch) }
 	}
 
 	// ============================================================================
@@ -468,6 +509,10 @@ public final class SQLiteManifestStore: ManifestStore {
 			SELECT id, path, size, mtime, hash, hash_algorithm, first_seen, last_verified, last_modified, status
 			FROM files WHERE hash_algorithm = ?
 			""")
+
+		stmtCountByAlgorithm = try prepare(
+			"SELECT COUNT(*) FROM files WHERE hash_algorithm = ?"
+		)
 
 		stmtAllRecords = try prepare(
 			"SELECT id, path, size, mtime, hash, hash_algorithm, first_seen, last_verified, last_modified, status FROM files"

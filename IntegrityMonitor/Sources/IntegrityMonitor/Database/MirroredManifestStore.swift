@@ -100,6 +100,24 @@ public final class MirroredManifestStore: ManifestStore {
 	}
 
 	// ============================================================================
+	public func countRecords(withAlgorithm algorithm: String) throws -> Int {
+		try primary.countRecords(withAlgorithm: algorithm)
+	}
+
+	// ============================================================================
+	public func forEachRecord(
+		withAlgorithm algorithm: String,
+		batchSize: Int,
+		_ body: ([FileRecord]) throws -> Void
+	) throws {
+		try primary.forEachRecord(
+			withAlgorithm: algorithm,
+			batchSize: batchSize,
+			body
+		)
+	}
+
+	// ============================================================================
 	public func allPaths() throws -> Set<String> {
 		try primary.allPaths()
 	}

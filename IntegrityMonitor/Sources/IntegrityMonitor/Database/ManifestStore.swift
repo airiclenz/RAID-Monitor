@@ -19,6 +19,12 @@ public protocol ManifestStore: AnyObject {
 	func upsertBatch(_ records: [FileRecord]) throws
 	func record(for path: String) throws -> FileRecord?
 	func records(withAlgorithm algorithm: String) throws -> [FileRecord]
+	func countRecords(withAlgorithm algorithm: String) throws -> Int
+	func forEachRecord(
+		withAlgorithm algorithm: String,
+		batchSize: Int,
+		_ body: ([FileRecord]) throws -> Void
+	) throws
 
 	/// All file paths currently in the manifest. Used for Phase 4 missing-file
 	/// reconciliation: caller subtracts the paths seen during the walk.

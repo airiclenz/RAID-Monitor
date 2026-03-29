@@ -46,9 +46,9 @@ public struct HashUpgradeScanner {
 		from oldAlgorithm: String,
 		to newAlgorithm: String
 	) async throws -> UpgradeResult {
-		// Fetch candidates first — if none, return early without needing valid hashers.
-		let candidates = try store.records(withAlgorithm: oldAlgorithm)
-		guard !candidates.isEmpty else {
+		// Check count first — if none, return early without needing valid hashers.
+		let totalCount = try store.countRecords(withAlgorithm: oldAlgorithm)
+		guard totalCount > 0 else {
 			logger.info("Hash upgrade: no records with algorithm '\(oldAlgorithm)' — nothing to do")
 			return UpgradeResult()
 		}
@@ -56,81 +56,87 @@ public struct HashUpgradeScanner {
 		let oldHasher = try HasherFactory.make(for: oldAlgorithm)
 		let newHasher = try HasherFactory.make(for: newAlgorithm)
 
-		logger.info("Hash upgrade: \(candidates.count) file(s) to upgrade from \(oldAlgorithm) → \(newAlgorithm)")
+		logger.info("Hash upgrade: \(totalCount) file(s) to upgrade from \(oldAlgorithm) → \(newAlgorithm)")
 
 		try store.logEvent(ScanEvent(
 			eventType: ScanEvent.hashUpgradeStart,
-			detail: "{\"from\":\"\(oldAlgorithm)\",\"to\":\"\(newAlgorithm)\",\"count\":\(candidates.count)}"
+			detail: "{\"from\":\"\(oldAlgorithm)\",\"to\":\"\(newAlgorithm)\",\"count\":\(totalCount)}"
 		))
 
 		var result = UpgradeResult()
-		var batch: [FileRecord] = []
-		let batchSize = 500
+		let writeBatchSize = 500
 
-		for record in candidates {
-			let url = URL(fileURLWithPath: record.path)
+		// Stream records in batches to avoid loading all candidates into memory.
+		try store.forEachRecord(
+			withAlgorithm: oldAlgorithm,
+			batchSize: writeBatchSize
+		) { readBatch in
+			var writeBatch: [FileRecord] = []
 
-			// Verify the old hash before upgrading
-			let oldHash: String
-			do {
-				oldHash = try oldHasher.hash(fileAt: url)
-			} catch {
-				logger.warn("Cannot read \(record.path): \(error) — skipping")
-				result.skipped += 1
-				continue
+			for record in readBatch {
+				// Drain Foundation/ObjC temporaries (FileHandle, Data buffers)
+				// after each file to prevent unbounded memory growth.
+				try autoreleasepool {
+					let url = URL(fileURLWithPath: record.path)
+
+					// Verify the old hash before upgrading
+					let oldHash: String
+					do {
+						oldHash = try oldHasher.hash(fileAt: url)
+					} catch {
+						logger.warn("Cannot read \(record.path): \(error) — skipping")
+						result.skipped += 1
+						return
+					}
+
+					if oldHash != record.hash {
+						// Corruption detected during upgrade — do NOT assign new hash.
+						// The record keeps its old hashAlgorithm so a re-run will pick
+						// it up again and re-alert (corrupted files should not be silently skipped).
+						var corruptedRecord = record
+						corruptedRecord.status = .corrupted
+						writeBatch.append(corruptedRecord)
+						result.corrupted += 1
+
+						logger.error("CORRUPTION DETECTED during hash upgrade: \(record.path)")
+						try store.logEvent(ScanEvent(
+							eventType: ScanEvent.fileCorrupted,
+							path: record.path,
+							detail: "{\"detected_during\":\"hash_upgrade\",\"stored\":\"\(record.hash.prefix(8))\",\"computed\":\"\(oldHash.prefix(8))\"}"
+						))
+						alertManager.sendIfEnabled(corruption: Alert(
+							title: "File Corruption Detected",
+							subtitle: (record.path as NSString).lastPathComponent,
+							body: "Corruption detected while upgrading hash algorithm:\n\(record.path)\n\nStored \(oldAlgorithm) hash does not match current content.",
+							severity: .critical
+						))
+						return
+					}
+
+					// Hash with new algorithm
+					let newHash: String
+					do {
+						newHash = try newHasher.hash(fileAt: url)
+					} catch {
+						logger.warn("Cannot hash \(record.path) with \(newAlgorithm): \(error) — skipping")
+						result.skipped += 1
+						return
+					}
+
+					var upgradedRecord = record
+					upgradedRecord.hash = newHash
+					upgradedRecord.hashAlgorithm = newAlgorithm
+					upgradedRecord.lastVerified = Date()
+					upgradedRecord.status = .ok
+					writeBatch.append(upgradedRecord)
+					result.upgraded += 1
+				}
 			}
 
-			if oldHash != record.hash {
-				// Corruption detected during upgrade — do NOT assign new hash.
-				// The record keeps its old hashAlgorithm so a re-run will pick
-				// it up again and re-alert (corrupted files should not be silently skipped).
-				var corruptedRecord = record
-				corruptedRecord.status = .corrupted
-				batch.append(corruptedRecord)
-				result.corrupted += 1
-
-				logger.error("CORRUPTION DETECTED during hash upgrade: \(record.path)")
-				try store.logEvent(ScanEvent(
-					eventType: ScanEvent.fileCorrupted,
-					path: record.path,
-					detail: "{\"detected_during\":\"hash_upgrade\",\"stored\":\"\(record.hash.prefix(8))\",\"computed\":\"\(oldHash.prefix(8))\"}"
-				))
-				alertManager.sendIfEnabled(corruption: Alert(
-					title: "File Corruption Detected",
-					subtitle: (record.path as NSString).lastPathComponent,
-					body: "Corruption detected while upgrading hash algorithm:\n\(record.path)\n\nStored \(oldAlgorithm) hash does not match current content.",
-					severity: .critical
-				))
-				continue
-			}
-
-			// Hash with new algorithm
-			let newHash: String
-			do {
-				newHash = try newHasher.hash(fileAt: url)
-			} catch {
-				logger.warn("Cannot hash \(record.path) with \(newAlgorithm): \(error) — skipping")
-				result.skipped += 1
-				continue
-			}
-
-			var upgradedRecord = record
-			upgradedRecord.hash = newHash
-			upgradedRecord.hashAlgorithm = newAlgorithm
-			upgradedRecord.lastVerified = Date()
-			upgradedRecord.status = .ok
-			batch.append(upgradedRecord)
-			result.upgraded += 1
-
-			if batch.count >= batchSize {
-				try store.upsertBatch(batch)
-				batch.removeAll(keepingCapacity: true)
+			if !writeBatch.isEmpty {
+				try store.upsertBatch(writeBatch)
 				logger.info("Hash upgrade progress: \(result.upgraded) upgraded, \(result.corrupted) corrupted")
 			}
-		}
-
-		if !batch.isEmpty {
-			try store.upsertBatch(batch)
 		}
 
 		try store.logEvent(ScanEvent(

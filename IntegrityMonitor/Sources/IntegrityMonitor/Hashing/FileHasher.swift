@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import CBLAKE3
 
 // ---------------------------------------------------------------------------
 // MARK: - FileHasher protocol
@@ -91,6 +92,73 @@ public struct SHA256Hasher: FileHasher {
 }
 
 // ---------------------------------------------------------------------------
+// MARK: - BLAKE3 implementation
+// ---------------------------------------------------------------------------
+
+public struct BLAKE3Hasher: FileHasher {
+
+	public let algorithmName = "blake3"
+
+	// ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+	private let chunkSize: Int
+
+	// ============================================================================
+	public init(chunkSize: Int = 4 * 1024 * 1024) {
+		self.chunkSize = chunkSize
+	}
+
+	// ============================================================================
+	public func hash(fileAt url: URL) throws -> String {
+		try hash(fileAt: url, onProgress: nil)
+	}
+
+	// ============================================================================
+	public func hash(
+		fileAt url: URL,
+		onProgress: HashProgressHandler?
+	) throws -> String {
+		let handle: FileHandle
+		do {
+			handle = try FileHandle(forReadingFrom: url)
+		} catch {
+			throw AppError.fileAccess(path: url.path, underlying: error)
+		}
+		defer { try? handle.close() }
+
+		let totalSize: Int64 = Int64(
+			(try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+		)
+		var bytesProcessed: Int64 = 0
+		var hasher = blake3_hasher()
+		blake3_hasher_init(&hasher)
+
+		while true {
+			let chunk: Data
+			do {
+				chunk = try handle.read(upToCount: chunkSize) ?? Data()
+			} catch {
+				throw AppError.fileAccess(path: url.path, underlying: error)
+			}
+			if chunk.isEmpty { break }
+			chunk.withUnsafeBytes { buffer in
+				blake3_hasher_update(
+					&hasher,
+					buffer.baseAddress,
+					buffer.count
+				)
+			}
+			bytesProcessed += Int64(chunk.count)
+			onProgress?(bytesProcessed, totalSize)
+		}
+
+		var output = [UInt8](repeating: 0, count: Int(BLAKE3_OUT_LEN))
+		blake3_hasher_finalize(&hasher, &output, Int(BLAKE3_OUT_LEN))
+		return output.map { String(format: "%02x", $0) }.joined()
+	}
+}
+
+// ---------------------------------------------------------------------------
 // MARK: - Factory
 // ---------------------------------------------------------------------------
 
@@ -101,6 +169,8 @@ public enum HasherFactory {
 		switch algorithmName.lowercased() {
 		case "sha256":
 			return SHA256Hasher()
+		case "blake3":
+			return BLAKE3Hasher()
 		default:
 			throw AppError.unsupportedHashAlgorithm(algorithmName)
 		}
