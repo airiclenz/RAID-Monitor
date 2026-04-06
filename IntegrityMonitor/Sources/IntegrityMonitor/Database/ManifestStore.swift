@@ -35,6 +35,10 @@ public protocol ManifestStore: AnyObject {
 	// MARK: Events
 	func logEvent(_ event: ScanEvent) throws
 
+	/// Return the most recent RAID-related event, or nil if none exists.
+	/// Used for state-change detection to suppress duplicate alerts.
+	func lastRaidEvent() throws -> ScanEvent?
+
 	// MARK: Scans
 	/// Insert a new scan row and return its rowid.
 	func insertScan(_ scan: ScanResult) throws -> Int64

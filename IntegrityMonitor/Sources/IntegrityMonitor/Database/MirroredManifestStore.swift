@@ -123,6 +123,11 @@ public final class MirroredManifestStore: ManifestStore {
 	}
 
 	// ============================================================================
+	public func lastRaidEvent() throws -> ScanEvent? {
+		try primary.lastRaidEvent()
+	}
+
+	// ============================================================================
 	public func lastScan() throws -> ScanResult? {
 		try primary.lastScan()
 	}

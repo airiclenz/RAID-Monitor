@@ -234,6 +234,63 @@ final class SQLiteManifestStoreTests: XCTestCase {
         )))
     }
 
+    // MARK: - Last RAID event
+
+    func testLastRaidEvent_returnsNilWhenNoEvents() throws {
+        let event = try store.lastRaidEvent()
+        XCTAssertNil(event)
+    }
+
+    func testLastRaidEvent_returnsNilWhenOnlyNonRaidEvents() throws {
+        try store.logEvent(ScanEvent(
+            eventType: ScanEvent.fileCorrupted,
+            path: "/RAID/bad.jpg",
+            detail: "corruption detected"
+        ))
+        try store.logEvent(ScanEvent(
+            eventType: ScanEvent.scanComplete,
+            detail: "done"
+        ))
+
+        let event = try store.lastRaidEvent()
+        XCTAssertNil(event)
+    }
+
+    func testLastRaidEvent_returnsMostRecentRaidEvent() throws {
+        try store.logEvent(ScanEvent(
+            timestamp: Date(timeIntervalSince1970: 1000),
+            eventType: ScanEvent.raidDegraded,
+            detail: "degraded"
+        ))
+        try store.logEvent(ScanEvent(
+            timestamp: Date(timeIntervalSince1970: 2000),
+            eventType: ScanEvent.raidOnline,
+            detail: "recovered"
+        ))
+
+        let event = try store.lastRaidEvent()
+        XCTAssertNotNil(event)
+        XCTAssertEqual(event?.eventType, ScanEvent.raidOnline)
+        XCTAssertEqual(event?.detail, "recovered")
+    }
+
+    func testLastRaidEvent_ignoresNonRaidEventTypes() throws {
+        try store.logEvent(ScanEvent(
+            timestamp: Date(timeIntervalSince1970: 1000),
+            eventType: ScanEvent.raidDisappeared,
+            detail: "array gone"
+        ))
+        try store.logEvent(ScanEvent(
+            timestamp: Date(timeIntervalSince1970: 2000),
+            eventType: ScanEvent.fileNew,
+            path: "/RAID/new.jpg"
+        ))
+
+        let event = try store.lastRaidEvent()
+        XCTAssertNotNil(event)
+        XCTAssertEqual(event?.eventType, ScanEvent.raidDisappeared)
+    }
+
     // MARK: - Algorithm query
 
     func testRecordsWithAlgorithm() throws {

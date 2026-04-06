@@ -26,6 +26,7 @@ public final class SQLiteManifestStore: ManifestStore {
 	private var stmtAllPaths: OpaquePointer?
 	private var stmtDeleteFile: OpaquePointer?
 	private var stmtInsertEvent: OpaquePointer?
+	private var stmtLastRaidEvent: OpaquePointer?
 	private var stmtInsertScan: OpaquePointer?
 	private var stmtUpdateScan: OpaquePointer?
 	private var stmtLastScan: OpaquePointer?
@@ -68,13 +69,13 @@ public final class SQLiteManifestStore: ManifestStore {
 	public func close() {
 		let stmts: [OpaquePointer?] = [
 			stmtUpsertFile, stmtSelectFile, stmtAllPaths, stmtDeleteFile,
-			stmtInsertEvent, stmtInsertScan, stmtUpdateScan, stmtLastScan,
+			stmtInsertEvent, stmtLastRaidEvent, stmtInsertScan, stmtUpdateScan, stmtLastScan,
 			stmtFilesToVerify, stmtAllFilesToVerify, stmtSelectByAlgorithm,
 			stmtCountByAlgorithm, stmtAllRecords
 		]
 		for stmt in stmts { sqlite3_finalize(stmt) }
 		stmtUpsertFile = nil; stmtSelectFile = nil; stmtAllPaths = nil
-		stmtDeleteFile = nil; stmtInsertEvent = nil; stmtInsertScan = nil
+		stmtDeleteFile = nil; stmtInsertEvent = nil; stmtLastRaidEvent = nil; stmtInsertScan = nil
 		stmtUpdateScan = nil; stmtLastScan = nil; stmtFilesToVerify = nil
 		stmtAllFilesToVerify = nil; stmtSelectByAlgorithm = nil
 		stmtCountByAlgorithm = nil; stmtAllRecords = nil
@@ -278,6 +279,40 @@ public final class SQLiteManifestStore: ManifestStore {
 		guard rc == SQLITE_DONE else {
 			throw AppError.database("INSERT event failed: \(dbError())")
 		}
+	}
+
+	// ============================================================================
+	public func lastRaidEvent() throws -> ScanEvent? {
+		guard let stmt = stmtLastRaidEvent else {
+			throw AppError.database("Database not open")
+		}
+		defer { sqlite3_reset(stmt) }
+
+		let rc = sqlite3_step(stmt)
+		if rc == SQLITE_DONE { return nil }
+		guard rc == SQLITE_ROW else {
+			throw AppError.database("SELECT last RAID event failed: \(dbError())")
+		}
+
+		let id = sqlite3_column_int64(stmt, 0)
+		let timestamp = Date(
+			timeIntervalSince1970: sqlite3_column_double(stmt, 1)
+		)
+		let eventType = String(cString: sqlite3_column_text(stmt, 2))
+		let path: String? = sqlite3_column_type(stmt, 3) == SQLITE_NULL
+			? nil
+			: String(cString: sqlite3_column_text(stmt, 3))
+		let detail: String? = sqlite3_column_type(stmt, 4) == SQLITE_NULL
+			? nil
+			: String(cString: sqlite3_column_text(stmt, 4))
+
+		return ScanEvent(
+			id: id,
+			timestamp: timestamp,
+			eventType: eventType,
+			path: path,
+			detail: detail
+		)
 	}
 
 	// MARK: - Scans
@@ -488,6 +523,14 @@ public final class SQLiteManifestStore: ManifestStore {
 		stmtInsertEvent = try prepare(
 			"INSERT INTO events (timestamp, event_type, path, detail) VALUES (?, ?, ?, ?)"
 		)
+
+		stmtLastRaidEvent = try prepare("""
+			SELECT id, timestamp, event_type, path, detail
+			FROM events
+			WHERE event_type IN ('raid_degraded', 'raid_failed', 'raid_disappeared', 'raid_online', 'smart_failed')
+			ORDER BY timestamp DESC
+			LIMIT 1
+			""")
 
 		stmtInsertScan = try prepare("INSERT INTO scans (started_at, status) VALUES (?, ?)")
 

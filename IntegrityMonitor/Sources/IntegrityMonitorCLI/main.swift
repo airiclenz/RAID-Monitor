@@ -190,7 +190,7 @@ func run() async throws -> Int32 {
 		try store.open()
 		defer { store.close() }
 
-		// Always run RAID check
+		// Always run RAID check — only alert on state transitions
 		if config.raid.enabled {
 			logger.info("\(Logger.c("Scheduled run:", .boldCyan)) RAID health check")
 			let raidScanner = RAIDScanner(
@@ -198,21 +198,55 @@ func run() async throws -> Int32 {
 				logger: logger
 			)
 			let (_, raidAlerts) = try raidScanner.scan()
-			for alert in raidAlerts {
-				if alert.title.contains("Unavailable") {
-					alertManager.sendIfEnabled(raidUnavailable: alert)
+
+			// Derive current RAID state from scan results
+			let currentState: String
+			if raidAlerts.isEmpty {
+				currentState = ScanEvent.raidOnline
+			} else if raidAlerts.contains(where: { $0.title.contains("Unavailable") }) {
+				currentState = ScanEvent.raidDisappeared
+			} else if raidAlerts.contains(where: { $0.title.contains("Failed") }) {
+				currentState = ScanEvent.raidFailed
+			} else if raidAlerts.contains(where: { $0.title.contains("SMART") }) {
+				currentState = ScanEvent.smartFailed
+			} else {
+				currentState = ScanEvent.raidDegraded
+			}
+
+			// Compare with previous state (assume online if no prior event)
+			let previousEvent = try store.lastRaidEvent()
+			let previousState = previousEvent?.eventType ?? ScanEvent.raidOnline
+
+			if currentState != previousState {
+				if currentState == ScanEvent.raidOnline {
+					// Recovery: RAID was unhealthy, now healthy
+					let recoveryAlert = Alert(
+						title: "RAID Array Recovered",
+						subtitle: "All arrays online",
+						body: "RAID health restored. Previous state: \(previousState).",
+						severity: .info
+					)
+					alertManager.send(recoveryAlert)
 					try store.logEvent(ScanEvent(
-						eventType: ScanEvent.raidDisappeared,
-						detail: alert.body
+						eventType: ScanEvent.raidOnline,
+						detail: "Recovered from \(previousState)"
 					))
 				} else {
-					alertManager.sendIfEnabled(raidAlert: alert)
-					let eventType = alert.title.contains("Failed") ? ScanEvent.raidFailed : ScanEvent.raidDegraded
+					// Unhealthy transition — dispatch alerts
+					for alert in raidAlerts {
+						if alert.title.contains("Unavailable") {
+							alertManager.sendIfEnabled(raidUnavailable: alert)
+						} else {
+							alertManager.sendIfEnabled(raidAlert: alert)
+						}
+					}
 					try store.logEvent(ScanEvent(
-						eventType: eventType,
-						detail: alert.body
+						eventType: currentState,
+						detail: raidAlerts.first?.body
 					))
 				}
+			} else {
+				logger.info("RAID state unchanged (\(Logger.c(currentState, .white))) — no alert sent")
 			}
 		}
 
