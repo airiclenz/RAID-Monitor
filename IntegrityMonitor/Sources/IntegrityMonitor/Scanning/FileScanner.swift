@@ -108,6 +108,7 @@ public actor FileScanner {
 	public func scan(mode: ScanMode = .full) async throws -> ScanResult {
 		var result = ScanResult(startedAt: Date())
 		result.id = try store.insertScan(result)
+		var scannedPaths: [String] = []
 
 		try store.logEvent(ScanEvent(eventType: ScanEvent.scanStart))
 		logger.info("\(Logger.c("=== Scan started", .boldGreen)) (mode: \(Logger.c("\(mode)", .boldWhite)))\(Logger.c(" ===", .boldGreen))")
@@ -116,6 +117,7 @@ public actor FileScanner {
 			if mode == .verifyAll {
 				// Verify-all: re-hash every tracked file, no walk or missing-file check
 				result = try await runVerifyAll(result: result)
+				scannedPaths = config.resolvedWatchPaths.map { $0.path }
 			} else {
 				// Phase 0: RAID health check
 				if mode != .filesOnly && config.raid.enabled {
@@ -123,7 +125,9 @@ public actor FileScanner {
 				}
 
 				// Phases 1–4: file integrity
-				result = try await runFilePhases(result: result)
+				let walkedPrefixes: Set<String>
+				(result, walkedPrefixes) = try await runFilePhases(result: result)
+				scannedPaths = Array(walkedPrefixes).sorted()
 			}
 			result.status = .completed
 
@@ -147,17 +151,18 @@ public actor FileScanner {
 		))
 
 		let hasIssues = result.filesCorrupted > 0 || result.filesMissing > 0
+		let volumeNames = scannedPaths.map { ($0 as NSString).lastPathComponent }
 		alertManager.sendIfEnabled(
 			scanComplete: Alert(
 				title: "RAID Integrity Scan Complete",
-				subtitle: hasIssues ? "Issues found" : "No issues",
-				body: scanSummaryText(result),
+				subtitle: scanSummarySubtitle(volumeNames: volumeNames, hasIssues: hasIssues),
+				body: scanSummaryText(result, volumeNames: volumeNames),
 				severity: hasIssues ? .warning : .info
 			),
 			hasIssues: hasIssues
 		)
 
-		logger.info("\(Logger.c("=== Scan complete:", .boldGreen)) \(scanSummaryText(result))\(Logger.c(" ===", .boldGreen))")
+		logger.info("\(Logger.c("=== Scan complete:", .boldGreen)) \(scanSummaryText(result, volumeNames: volumeNames))\(Logger.c(" ===", .boldGreen))")
 		return result
 	}
 
@@ -188,7 +193,7 @@ public actor FileScanner {
 	// MARK: - Phases 1–4: File integrity
 
 	// ============================================================================
-	private func runFilePhases(result: ScanResult) async throws -> ScanResult {
+	private func runFilePhases(result: ScanResult) async throws -> (ScanResult, Set<String>) {
 		var result = result
 
 		// Pre-scan: sync primary → replica (no-op if no replica configured)
@@ -219,7 +224,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 		logger.info("\(Logger.c("Phase 4:", .boldCyan)) Missing file reconciliation")
 		try runPhase4(pathsSeen: pathsSeen, walkedPrefixes: walkedPrefixes, result: &result)
 
-		return result
+		return (result, walkedPrefixes)
 	}
 
 	// MARK: - Verify-all mode
@@ -729,8 +734,28 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 	// MARK: - Summary helpers
 
 	// ============================================================================
-	private func scanSummaryText(_ scanResult: ScanResult) -> String {
-		"walked=\(scanResult.filesWalked) new=\(scanResult.filesNew) modified=\(scanResult.filesModified) verified=\(scanResult.filesVerified) corrupted=\(scanResult.filesCorrupted) missing=\(scanResult.filesMissing) skipped=\(scanResult.filesSkipped)"
+	private func scanSummaryText(
+		_ scanResult: ScanResult,
+		volumeNames: [String]
+	) -> String {
+		let counters = "walked=\(scanResult.filesWalked) new=\(scanResult.filesNew) modified=\(scanResult.filesModified) verified=\(scanResult.filesVerified) corrupted=\(scanResult.filesCorrupted) missing=\(scanResult.filesMissing) skipped=\(scanResult.filesSkipped)"
+		guard !volumeNames.isEmpty else {
+			return counters
+		}
+		let label = volumeNames.count == 1 ? "Volume" : "Volumes"
+		return "\(label): \(volumeNames.joined(separator: ", "))\n\(counters)"
+	}
+
+	// ============================================================================
+	private func scanSummarySubtitle(
+		volumeNames: [String],
+		hasIssues: Bool
+	) -> String {
+		let status = hasIssues ? "Issues found" : "No issues"
+		guard !volumeNames.isEmpty else {
+			return status
+		}
+		return "\(volumeNames.joined(separator: ", ")) — \(status)"
 	}
 
 	// ============================================================================
