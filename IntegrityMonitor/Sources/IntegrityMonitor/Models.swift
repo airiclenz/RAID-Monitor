@@ -59,6 +59,7 @@ public struct ScanResult {
 	public var completedAt: Date?
 	public var filesWalked: Int
 	public var filesSkipped: Int
+	public var filesInaccessible: Int
 	public var filesNew: Int
 	public var filesModified: Int
 	public var filesVerified: Int
@@ -74,6 +75,7 @@ public struct ScanResult {
 		completedAt: Date? = nil,
 		filesWalked: Int = 0,
 		filesSkipped: Int = 0,
+		filesInaccessible: Int = 0,
 		filesNew: Int = 0,
 		filesModified: Int = 0,
 		filesVerified: Int = 0,
@@ -87,6 +89,7 @@ public struct ScanResult {
 		self.completedAt = completedAt
 		self.filesWalked = filesWalked
 		self.filesSkipped = filesSkipped
+		self.filesInaccessible = filesInaccessible
 		self.filesNew = filesNew
 		self.filesModified = filesModified
 		self.filesVerified = filesVerified

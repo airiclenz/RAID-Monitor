@@ -202,7 +202,7 @@ public actor FileScanner {
 
 		// Phase 1: directory walk + triage
 		logger.info("\(Logger.c("Phase 1:", .boldCyan)) Directory walk and triage")
-		let (toHash, pathsSeen, walkedPrefixes) = try runPhase1(result: &result)
+		let (toHash, walkedPrefixes) = try runPhase1(result: &result)
 		onProgress?("")	 // end progress block
 
 		// Phase 2: hash new/modified files
@@ -216,13 +216,13 @@ public actor FileScanner {
 			before: verificationCutoff,
 			limit: config.performance.maxVerificationsPerRun
 		)
-logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVerify.count)", .boldWhite)) file(s)")
+		logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVerify.count)", .boldWhite)) file(s)")
 		try await runPhase3(toVerify: toVerify, result: &result)
 		onProgress?("")  // end progress block
 
 		// Phase 4: missing file reconciliation
 		logger.info("\(Logger.c("Phase 4:", .boldCyan)) Missing file reconciliation")
-		try runPhase4(pathsSeen: pathsSeen, walkedPrefixes: walkedPrefixes, result: &result)
+		try runPhase4(walkedPrefixes: walkedPrefixes, result: &result)
 
 		return (result, walkedPrefixes)
 	}
@@ -244,9 +244,8 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 	// MARK: - Phase 1: Walk
 
 	// ============================================================================
-	private func runPhase1(result: inout ScanResult) throws -> (toHash: [(URL, FileRecord?)], pathsSeen: Set<String>, walkedPrefixes: Set<String>) {
+	private func runPhase1(result: inout ScanResult) throws -> (toHash: [(URL, FileRecord?)], walkedPrefixes: Set<String>) {
 		var toHash: [(URL, FileRecord?)] = []
-		var pathsSeen = Set<String>()
 		var walkedPrefixes = Set<String>()
 
 		for watchURL in config.resolvedWatchPaths {
@@ -259,6 +258,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				isDirectory: &isDir
 			), isDir.boolValue else {
 				logger.warn("Watch path inaccessible (volume may be unmounted): \(Logger.c(watchURL.path, .cyan))")
+				result.filesInaccessible += 1
 				alertManager.sendIfEnabled(volumeUnavailable: Alert(
 					title: "Volume Unavailable",
 					subtitle: (watchURL.path as NSString).lastPathComponent,
@@ -269,6 +269,10 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 			}
 			walkedPrefixes.insert(watchURL.path)
 
+			// Accumulate inaccessible-file errors from the enumerator's error
+			// handler into a local var, then apply to result after the loop.
+			// The errorHandler closure is @escaping and cannot capture inout result.
+			var localInaccessible = 0
 			guard let enumerator = FileManager.default.enumerator(
 				at: watchURL,
 				includingPropertiesForKeys: [
@@ -280,10 +284,12 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				options: [.skipsHiddenFiles],
 				errorHandler: { url, error in
 					self.logger.warn("Cannot access \(Logger.c(url.path, .cyan)): \(error.localizedDescription)")
+					localInaccessible += 1
 					return true	 // continue enumeration
 				}
 			) else {
 				logger.warn("Cannot enumerate \(Logger.c(watchURL.path, .cyan))")
+				result.filesInaccessible += 1
 				continue
 			}
 
@@ -312,7 +318,6 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 				}
 
 				result.filesWalked += 1
-				pathsSeen.insert(url.path)
 
 				if result.filesWalked % 500 == 0 {
 					onProgress?("Phase 1: \(Logger.c("\(result.filesWalked)", .yellow)) files discovered")
@@ -336,10 +341,12 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 					toHash.append((url, nil))
 				}
 			}
+
+			result.filesInaccessible += localInaccessible
 		}
 
 		onProgress?("Phase 1: \(Logger.c("\(result.filesWalked)", .yellow)) files discovered, \(Logger.c("\(toHash.count)", .yellow)) to hash")
-		return (toHash, pathsSeen, walkedPrefixes)
+		return (toHash, walkedPrefixes)
 	}
 
 	// MARK: - Phase 2: Hash new/modified
@@ -362,6 +369,11 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 		// Per-volume semaphores ensure each disk is accessed by at most its
 		// configured number of concurrent hash operations.
 		var pendingRecords: [FileRecord] = []
+
+		// Best-effort flush of any records buffered when the task group throws
+		// mid-batch (e.g. a DB write failure). On the normal exit path
+		// pendingRecords is already empty, so this is a no-op.
+		defer { try? store.upsertBatch(pendingRecords) }
 
 		try await withThrowingTaskGroup(of: FileRecord?.self) { group in
 			var iterator = toHash.makeIterator()
@@ -531,6 +543,8 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 
 		var pendingRecords: [FileRecord] = []
 
+		defer { try? store.upsertBatch(pendingRecords) }
+
 		try await withThrowingTaskGroup(of: FileRecord?.self) { group in
 			var iterator = toVerify.makeIterator()
 			var inFlight = 0
@@ -683,13 +697,12 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 
 	// ============================================================================
 	private func runPhase4(
-		pathsSeen: Set<String>,
 		walkedPrefixes: Set<String>,
 		result: inout ScanResult
 	) throws {
 		try store.forEachPathBatch(batchSize: 5000) { batch in
 			for path in batch {
-				guard !pathsSeen.contains(path) else { continue }
+				guard !FileManager.default.fileExists(atPath: path) else { continue }
 
 				// Skip files under watch paths that were inaccessible (volume
 				// may be unmounted). Without this guard, a temporary mount
@@ -738,7 +751,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 		_ scanResult: ScanResult,
 		volumeNames: [String]
 	) -> String {
-		let counters = "walked=\(scanResult.filesWalked) new=\(scanResult.filesNew) modified=\(scanResult.filesModified) verified=\(scanResult.filesVerified) corrupted=\(scanResult.filesCorrupted) missing=\(scanResult.filesMissing) skipped=\(scanResult.filesSkipped)"
+		let counters = "walked=\(scanResult.filesWalked) new=\(scanResult.filesNew) modified=\(scanResult.filesModified) verified=\(scanResult.filesVerified) corrupted=\(scanResult.filesCorrupted) missing=\(scanResult.filesMissing) inaccessible=\(scanResult.filesInaccessible) skipped=\(scanResult.filesSkipped)"
 		guard !volumeNames.isEmpty else {
 			return counters
 		}
@@ -760,7 +773,7 @@ logger.info("\(Logger.c("Phase 3:", .boldCyan)) Re-verifying \(Logger.c("\(toVer
 
 	// ============================================================================
 	private func scanSummaryJSON(_ scanResult: ScanResult) -> String {
-		"{\"walked\":\(scanResult.filesWalked),\"new\":\(scanResult.filesNew),\"modified\":\(scanResult.filesModified),\"verified\":\(scanResult.filesVerified),\"corrupted\":\(scanResult.filesCorrupted),\"missing\":\(scanResult.filesMissing)}"
+		"{\"walked\":\(scanResult.filesWalked),\"new\":\(scanResult.filesNew),\"modified\":\(scanResult.filesModified),\"verified\":\(scanResult.filesVerified),\"corrupted\":\(scanResult.filesCorrupted),\"missing\":\(scanResult.filesMissing),\"inaccessible\":\(scanResult.filesInaccessible)}"
 	}
 
 	// ============================================================================

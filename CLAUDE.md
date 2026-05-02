@@ -79,7 +79,11 @@ The LaunchAgent uses `StartInterval` (default every 5 minutes, controlled by `sc
 
 ## SQLite schema
 
-Three tables: `files` (one row per tracked file), `events` (append-only audit log), `scans` (run metadata). Schema is created in `SQLiteManifestStore.createSchema()`. The schema version is recorded in a `schema_version` table — increment it and add migration logic in `open()` if you change the schema.
+Three tables: `files` (one row per tracked file), `events` (append-only audit log), `scans` (run metadata). Schema is created in `SQLiteManifestStore.createSchema()`. The schema version is recorded in a `schema_version` table — increment it and add migration logic in `open()` if you change the schema. Current schema version: **3**.
+
+The `scans` table has one column per `ScanResult` counter, including `files_inaccessible` (paths the Phase 1 enumerator could not access, e.g. permission denied).
+
+Phase 4 (missing-file reconciliation) iterates DB paths in batches and checks each one with `FileManager.fileExists(atPath:)`. It does **not** build an in-memory `Set<String>` of walked paths — memory usage during a scan is therefore independent of library size.
 
 Key indexes: `idx_files_last_verified` (Phase 3 rolling query), `idx_files_hash_algorithm` (upgrade query), `idx_files_status`, `idx_files_verify_rolling` (composite index on `(status, last_verified)` for efficient Phase 3 queries).
 

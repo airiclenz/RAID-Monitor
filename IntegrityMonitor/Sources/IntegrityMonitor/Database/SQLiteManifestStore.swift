@@ -341,14 +341,15 @@ public final class SQLiteManifestStore: ManifestStore {
 		sqlite3_bind_double(stmt, 1, (scan.completedAt ?? Date()).timeIntervalSince1970)
 		sqlite3_bind_int(stmt, 2, Int32(scan.filesWalked))
 		sqlite3_bind_int(stmt, 3, Int32(scan.filesSkipped))
-		sqlite3_bind_int(stmt, 4, Int32(scan.filesNew))
-		sqlite3_bind_int(stmt, 5, Int32(scan.filesModified))
-		sqlite3_bind_int(stmt, 6, Int32(scan.filesVerified))
-		sqlite3_bind_int(stmt, 7, Int32(scan.filesCorrupted))
-		sqlite3_bind_int(stmt, 8, Int32(scan.filesMissing))
-		sqlite3_bind_int(stmt, 9, Int32(scan.filesUpgraded))
-		sqlite3_bind_text(stmt, 10, scan.status.rawValue, -1, SQLITE_TRANSIENT)
-		sqlite3_bind_int64(stmt, 11, scanId)
+		sqlite3_bind_int(stmt, 4, Int32(scan.filesInaccessible))
+		sqlite3_bind_int(stmt, 5, Int32(scan.filesNew))
+		sqlite3_bind_int(stmt, 6, Int32(scan.filesModified))
+		sqlite3_bind_int(stmt, 7, Int32(scan.filesVerified))
+		sqlite3_bind_int(stmt, 8, Int32(scan.filesCorrupted))
+		sqlite3_bind_int(stmt, 9, Int32(scan.filesMissing))
+		sqlite3_bind_int(stmt, 10, Int32(scan.filesUpgraded))
+		sqlite3_bind_text(stmt, 11, scan.status.rawValue, -1, SQLITE_TRANSIENT)
+		sqlite3_bind_int64(stmt, 12, scanId)
 
 		let rc = sqlite3_step(stmt)
 		guard rc == SQLITE_DONE else {
@@ -454,9 +455,10 @@ public final class SQLiteManifestStore: ManifestStore {
 			id				 INTEGER PRIMARY KEY,
 			started_at		 REAL	 NOT NULL,
 			completed_at	 REAL,
-			files_walked	 INTEGER NOT NULL DEFAULT 0,
-			files_skipped	 INTEGER NOT NULL DEFAULT 0,
-			files_new		 INTEGER NOT NULL DEFAULT 0,
+			files_walked		  INTEGER NOT NULL DEFAULT 0,
+			files_skipped		  INTEGER NOT NULL DEFAULT 0,
+			files_inaccessible	  INTEGER NOT NULL DEFAULT 0,
+			files_new			  INTEGER NOT NULL DEFAULT 0,
 			files_modified	 INTEGER NOT NULL DEFAULT 0,
 			files_verified	 INTEGER NOT NULL DEFAULT 0,
 			files_corrupted	 INTEGER NOT NULL DEFAULT 0,
@@ -493,6 +495,12 @@ public final class SQLiteManifestStore: ManifestStore {
 		if currentVersion < 2 {
 			try exec("DELETE FROM files WHERE status = 'missing'")
 			try exec("UPDATE schema_version SET version = 2")
+		}
+
+		// Migration 3: Add files_inaccessible counter column to scans table.
+		if currentVersion < 3 {
+			try exec("ALTER TABLE scans ADD COLUMN files_inaccessible INTEGER NOT NULL DEFAULT 0")
+			try exec("UPDATE schema_version SET version = 3")
 		}
 	}
 
@@ -536,22 +544,23 @@ public final class SQLiteManifestStore: ManifestStore {
 
 		stmtUpdateScan = try prepare("""
 			UPDATE scans SET
-				completed_at	= ?,
-				files_walked	= ?,
-				files_skipped	= ?,
-				files_new		= ?,
-				files_modified	= ?,
-				files_verified	= ?,
-				files_corrupted = ?,
-				files_missing	= ?,
-				files_upgraded	= ?,
-				status			= ?
+				completed_at	   = ?,
+				files_walked	   = ?,
+				files_skipped	   = ?,
+				files_inaccessible = ?,
+				files_new		   = ?,
+				files_modified	   = ?,
+				files_verified	   = ?,
+				files_corrupted    = ?,
+				files_missing	   = ?,
+				files_upgraded	   = ?,
+				status			   = ?
 			WHERE id = ?
 			""")
 
 		stmtLastScan = try prepare("""
 			SELECT id, started_at, completed_at,
-				   files_walked, files_skipped, files_new, files_modified,
+				   files_walked, files_skipped, files_inaccessible, files_new, files_modified,
 				   files_verified, files_corrupted, files_missing, files_upgraded, status
 			FROM scans ORDER BY started_at DESC LIMIT 1
 			""")
@@ -672,15 +681,16 @@ public final class SQLiteManifestStore: ManifestStore {
 		let startedAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1))
 		let completedAtRaw = sqlite3_column_type(stmt, 2) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 2)
 		let completedAt = completedAtRaw.map { Date(timeIntervalSince1970: $0) }
-		let walked	 = Int(sqlite3_column_int(stmt, 3))
-		let skipped	 = Int(sqlite3_column_int(stmt, 4))
-		let new		 = Int(sqlite3_column_int(stmt, 5))
-		let modified = Int(sqlite3_column_int(stmt, 6))
-		let verified = Int(sqlite3_column_int(stmt, 7))
-		let corrupted = Int(sqlite3_column_int(stmt, 8))
-		let missing	 = Int(sqlite3_column_int(stmt, 9))
-		let upgraded = Int(sqlite3_column_int(stmt, 10))
-		let statusStr = String(cString: sqlite3_column_text(stmt, 11))
+		let walked		   = Int(sqlite3_column_int(stmt, 3))
+		let skipped		   = Int(sqlite3_column_int(stmt, 4))
+		let inaccessible   = Int(sqlite3_column_int(stmt, 5))
+		let new			   = Int(sqlite3_column_int(stmt, 6))
+		let modified	   = Int(sqlite3_column_int(stmt, 7))
+		let verified	   = Int(sqlite3_column_int(stmt, 8))
+		let corrupted	   = Int(sqlite3_column_int(stmt, 9))
+		let missing		   = Int(sqlite3_column_int(stmt, 10))
+		let upgraded	   = Int(sqlite3_column_int(stmt, 11))
+		let statusStr	   = String(cString: sqlite3_column_text(stmt, 12))
 		let status = ScanStatus(rawValue: statusStr) ?? .completed
 
 		return ScanResult(
@@ -689,6 +699,7 @@ public final class SQLiteManifestStore: ManifestStore {
 			completedAt: completedAt,
 			filesWalked: walked,
 			filesSkipped: skipped,
+			filesInaccessible: inaccessible,
 			filesNew: new,
 			filesModified: modified,
 			filesVerified: verified,

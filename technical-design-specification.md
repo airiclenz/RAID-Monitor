@@ -283,6 +283,7 @@ One row per scan run. Provides the data for `--mode report`.
 | `completed_at` | REAL | Nullable |
 | `files_walked` | INTEGER | |
 | `files_skipped` | INTEGER | |
+| `files_inaccessible` | INTEGER | Paths the enumerator could not access during Phase 1 (e.g. permission denied) |
 | `files_new` | INTEGER | |
 | `files_modified` | INTEGER | |
 | `files_verified` | INTEGER | |
@@ -377,6 +378,8 @@ Walks all configured watch paths using `FileManager.enumerator`. For each file:
 2. `ExclusionRules.shouldInclude(fileAt:size:)` is checked for individual files.
 3. `mtime` and `size` are compared against the database record.
 
+Enumeration errors (e.g. permission denied on a subdirectory) are counted in `files_inaccessible`, logged at warn level, and enumeration continues. An inaccessible watch path root (e.g. unmounted volume) skips the entire path and also increments `files_inaccessible`. The counter is surfaced in the scan summary log line and stored in the `scans` table.
+
 Files are bucketed into:
 - **New** — not in database → queue for Phase 2 hashing
 - **Modified** — `mtime` or `size` changed → queue for Phase 2 re-hashing
@@ -385,7 +388,7 @@ Files are bucketed into:
 
 ### Phase 2 — Hash new and modified files
 
-Files from the new/modified bucket are hashed using a `TaskGroup` with `maxHashThreads` concurrency. Results are written to the database in batches of `dbBatchSize` inside single transactions for performance.
+Files from the new/modified bucket are hashed using a `TaskGroup` with `maxHashThreads` concurrency. Results are written to the database in batches of `dbBatchSize` inside single transactions for performance. A `defer` block ensures any records buffered in the current partial batch are flushed even if the task group exits due to an error mid-scan.
 
 **Important:** For spinning HDDs, `maxHashThreads` should be 1 or 2. Parallel reads on co-located spindles cause seek thrashing. For SSDs, 4–8 is appropriate.
 
@@ -405,7 +408,7 @@ On each scan, the database is queried for files with `last_verified < now - sche
 
 Files present in the database but not encountered during the walk are marked as `missing`. This is informational by default — intentional deletions and disappeared files are indistinguishable from this tool's perspective. The `onMissingFile` notification is disabled in the default config to avoid noise from expected deletions.
 
-The reconciliation is fully implemented via a database set-difference algorithm. The system fetches all tracked paths from the database (`store.allPaths()`), compares them against paths seen during the current scan, and re-evaluates exclusions and mount states before marking files as missing.
+The reconciliation iterates all tracked paths from the database in batches and performs a filesystem existence check (`FileManager.fileExists(atPath:)`) for each one. Paths that no longer exist on disk are candidates for missing-file processing. Exclusion rules and mount state (`walkedPrefixes`) are re-evaluated before a file is marked as missing, preventing false positives from newly-excluded paths or temporarily unmounted volumes. Because no in-memory set of walked paths is built, memory usage during a scan is independent of library size.
 
 ---
 
